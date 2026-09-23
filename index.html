@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Hovercraft: Takedown 3D - Combate Veicular Voxel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Canvas 3D WebGL Nativo -->
+  <canvas id="glCanvas"></canvas>
+
+  <!-- Flash de Dano na Tela -->
+  <div id="damage-flash" class="damage-flash"></div>
+
+  <!-- Contêiner Geral da Interface -->
+  <div id="ui-container">
+
+    <!-- HUD DURANTE O JOGO -->
+    <div id="hud" class="hud-layer hidden">
+      <!-- Painel Superior Esquerdo: Vida e Escudo -->
+      <div class="hud-panel hud-player-status">
+        <div class="hud-label-row">
+          <span class="hud-label">VEÍCULO HP</span>
+          <span id="hud-hp-text" class="hud-value">1000 / 1000</span>
+        </div>
+        <div class="progress-bar-container">
+          <div id="hud-hp-fill" class="progress-bar-fill hp-fill" style="width: 100%;"></div>
+          <div id="hud-shield-fill" class="progress-bar-fill shield-fill" style="width: 0%;"></div>
+        </div>
+        <div id="hud-shield-badge" class="shield-badge hidden">ESCUDO ATIVO</div>
+      </div>
+
+      <!-- Painel Superior Central: Onda Atual e Notificações -->
+      <div class="hud-panel hud-wave-center">
+        <div id="hud-wave-tag" class="wave-tag">ONDA 1</div>
+        <div id="hud-wave-banner" class="wave-banner hidden">
+          <h2 id="hud-wave-title">ONDA 1</h2>
+          <p id="hud-wave-subtitle">PREPARE-SE</p>
+        </div>
+      </div>
+
+      <!-- Painel Superior Direito: Distância e Pontuação -->
+      <div class="hud-panel hud-score-status">
+        <div class="hud-stat-box">
+          <span class="hud-label">DISTÂNCIA</span>
+          <span id="hud-distance" class="hud-value-large">0 m</span>
+        </div>
+        <div class="hud-stat-box">
+          <span class="hud-label">PONTOS</span>
+          <span id="hud-score" class="hud-value-large">0</span>
+        </div>
+      </div>
+
+      <!-- Painel Esquerdo: Combo Multiplicador -->
+      <div id="hud-combo-panel" class="hud-combo-panel hidden">
+        <div class="combo-text">COMBO</div>
+        <div id="hud-combo-mult" class="combo-mult">x2</div>
+        <div class="combo-timer-bar">
+          <div id="hud-combo-fill" class="combo-timer-fill" style="width: 100%;"></div>
+        </div>
+      </div>
+
+      <!-- Painel Inferior: Power-ups Ativos -->
+      <div id="hud-powerups" class="hud-powerups-panel">
+        <div id="powerup-rapid-fire" class="powerup-card hidden">
+          <div class="powerup-icon">⚡</div>
+          <div class="powerup-info">
+            <span class="powerup-name">TIRO RÁPIDO</span>
+            <div class="powerup-bar"><div id="powerup-rapid-fill" class="powerup-fill"></div></div>
+          </div>
+        </div>
+        <div id="powerup-double-damage" class="powerup-card hidden">
+          <div class="powerup-icon">💥</div>
+          <div class="powerup-info">
+            <span class="powerup-name">DANO 2X</span>
+            <div class="powerup-bar"><div id="powerup-damage-fill" class="powerup-fill"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contêiner de Barras de Vida dos Inimigos (Projeção 3D -> 2D) -->
+      <div id="enemy-health-bars" class="enemy-health-bars-layer"></div>
+
+      <!-- Crosshair / Mira Voxel Sutil -->
+      <div class="crosshair-container">
+        <div class="crosshair"></div>
+      </div>
+    </div>
+
+    <!-- MENU PRINCIPAL -->
+    <div id="screen-main-menu" class="screen active">
+      <div class="menu-backdrop"></div>
+      <div class="menu-content">
+        <div class="title-container">
+          <div class="game-logo-glow"></div>
+          <h1 class="game-title">HOVERCRAFT</h1>
+          <h2 class="game-subtitle">TAKEDOWN 3D</h2>
+          <p class="game-tagline">COMBATE VEICULAR VOXEL EM ALTA VELOCIDADE</p>
+        </div>
+
+        <div class="menu-buttons">
+          <button id="btn-menu-play" class="btn btn-primary btn-glow">JOGAR</button>
+          <button id="btn-menu-how" class="btn btn-secondary">COMO JOGAR</button>
+          <button id="btn-menu-settings" class="btn btn-secondary">CONFIGURAÇÕES</button>
+        </div>
+
+        <div class="menu-footer">
+          <span>RENDERIZAÇÃO 3D PURA EM WEBGL • SEM LIBS EXTERNAS</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELA DE PREPARAÇÃO: SELEÇÃO DE VEÍCULO E ARMA -->
+    <div id="screen-select" class="screen hidden">
+      <div class="select-container">
+        <h2 class="section-heading">PREPARAÇÃO DE COMBATE</h2>
+
+        <!-- Etapa 1: Escolha do Veículo -->
+        <div class="selection-section">
+          <h3 class="step-title">1. ESCOLHA SEU VEÍCULO</h3>
+          <div class="cards-grid" id="vehicle-cards">
+            <!-- Interceptor -->
+            <div class="selection-card selected" data-vehicle="interceptor">
+              <div class="card-badge badge-bal">EQUILIBRADO</div>
+              <h4 class="card-title">INTERCEPTOR</h4>
+              <div class="card-stats">
+                <div class="stat-row">
+                  <span>HP Inicial:</span>
+                  <strong>1000</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Velocidade Lateral:</span>
+                  <div class="stat-bar"><div style="width: 70%;"></div></div>
+                </div>
+                <div class="stat-row">
+                  <span>Resistência Colisão:</span>
+                  <div class="stat-bar"><div style="width: 65%;"></div></div>
+                </div>
+                <div class="stat-row">
+                  <span>Agilidade:</span>
+                  <div class="stat-bar"><div style="width: 70%;"></div></div>
+                </div>
+              </div>
+              <p class="card-desc">Chassi versátil com asas delta e propulsores duplos. Condução estável em qualquer situação.</p>
+            </div>
+
+            <!-- Raptor -->
+            <div class="selection-card" data-vehicle="raptor">
+              <div class="card-badge badge-spd">VELOZ & ÁGIL</div>
+              <h4 class="card-title">RAPTOR</h4>
+              <div class="card-stats">
+                <div class="stat-row">
+                  <span>HP Inicial:</span>
+                  <strong>1000</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Velocidade Lateral:</span>
+                  <div class="stat-bar"><div style="width: 95%;"></div></div>
+                </div>
+                <div class="stat-row">
+                  <span>Resistência Colisão:</span>
+                  <div class="stat-bar"><div style="width: 45%;"></div></div>
+                </div>
+                <div class="stat-row">
+                  <span>Agilidade:</span>
+                  <div class="stat-bar"><div style="width: 95%;"></div></div>
+                </div>
+              </div>
+              <p class="card-desc">Focado em alta agilidade e reflexos rápidos. Sofre dano adicional em colisões diretas.</p>
+            </div>
+
+            <!-- Titan -->
+            <div class="selection-card" data-vehicle="titan">
+              <div class="card-badge badge-arm">BLINDADO PESADO</div>
+              <h4 class="card-title">TITAN</h4>
+              <div class="card-stats">
+                <div class="stat-row">
+                  <span>HP Inicial:</span>
+                  <strong>1000</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Velocidade Lateral:</span>
+                  <div class="stat-bar"><div style="width: 50%;"></div></div>
+                </div>
+                <div class="stat-row">
+                  <span>Resistência Colisão:</span>
+                  <div class="stat-bar"><div style="width: 95%;"></div></div>
+                </div>
+                <div class="stat-row">
+                  <span>Agilidade:</span>
+                  <div class="stat-bar"><div style="width: 50%;"></div></div>
+                </div>
+              </div>
+              <p class="card-desc">Fortaleza blindada com absorção superior de impacto e grande estabilidade contra abalroamento.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Etapa 2: Escolha da Arma -->
+        <div class="selection-section">
+          <h3 class="step-title">2. ESCOLHA SUA ARMA</h3>
+          <div class="cards-grid" id="weapon-cards">
+            <!-- Metralhadora -->
+            <div class="selection-card selected" data-weapon="machinegun">
+              <div class="card-badge badge-bal">AUTOMÁTICA</div>
+              <h4 class="card-title">METRALHADORA</h4>
+              <div class="card-stats">
+                <div class="stat-row">
+                  <span>Dano por Tiro:</span>
+                  <strong>25</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Cadência:</span>
+                  <strong>6 tiros / seg</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Alcance:</span>
+                  <strong>Longo</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Precisão:</span>
+                  <strong>Alta</strong>
+                </div>
+              </div>
+              <p class="card-desc">Disparos contínuos e velozes. Excelente para alvejar inimigos à longa distância.</p>
+            </div>
+
+            <!-- Dispersora -->
+            <div class="selection-card" data-weapon="shotgun">
+              <div class="card-badge badge-spd">SHOTGUN</div>
+              <h4 class="card-title">DISPERSORA</h4>
+              <div class="card-stats">
+                <div class="stat-row">
+                  <span>Dano:</span>
+                  <strong>12 x 5 (60 max)</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Cadência:</span>
+                  <strong>2 disparos / seg</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Alcance:</span>
+                  <strong>Curto</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Dispersão:</span>
+                  <strong>5 projéteis em leque</strong>
+                </div>
+              </div>
+              <p class="card-desc">Devastadora à queima-roupa. Múltiplos projéteis atingem vários inimigos ou causam dano concentrado.</p>
+            </div>
+
+            <!-- Canhão Pesado -->
+            <div class="selection-card" data-weapon="cannon">
+              <div class="card-badge badge-arm">ALTO IMPACTO</div>
+              <h4 class="card-title">CANHÃO PESADO</h4>
+              <div class="card-stats">
+                <div class="stat-row">
+                  <span>Dano por Tiro:</span>
+                  <strong>100</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Cadência:</span>
+                  <strong>1 tiro / seg</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Alcance:</span>
+                  <strong>Muito Longo</strong>
+                </div>
+                <div class="stat-row">
+                  <span>Efeito:</span>
+                  <strong>Impacto & Trepidação</strong>
+                </div>
+              </div>
+              <p class="card-desc">Projéteis maciços de plasma explosivo com alto recuo e estrondo destrutivo em alvos pesados.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Botões de Ação -->
+        <div class="select-actions">
+          <button id="btn-select-back" class="btn btn-secondary">VOLTAR</button>
+          <button id="btn-start-game" class="btn btn-primary btn-glow btn-large">INICIAR MISSÃO</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELA DE COMO JOGAR -->
+    <div id="screen-how-to-play" class="screen hidden">
+      <div class="modal-box">
+        <h2 class="modal-title">COMO JOGAR</h2>
+        <div class="modal-content">
+          <div class="how-section">
+            <h3>COMANDOS PRINCIPAIS</h3>
+            <div class="controls-grid">
+              <div class="control-item">
+                <div class="key-caps">
+                  <span class="key">A</span> ou <span class="key">←</span>
+                </div>
+                <span class="key-desc">Mover Hovercraft para a <strong>Esquerda</strong></span>
+              </div>
+              <div class="control-item">
+                <div class="key-caps">
+                  <span class="key">D</span> ou <span class="key">→</span>
+                </div>
+                <span class="key-desc">Mover Hovercraft para a <strong>Direita</strong></span>
+              </div>
+              <div class="control-item">
+                <div class="key-caps">
+                  <span class="key key-space">ESPAÇO</span>
+                </div>
+                <span class="key-desc"><strong>Disparar Arma</strong> (Pressione no ritmo desejado)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="how-section">
+            <h3>MECÂNICAS DO JOGO</h3>
+            <ul class="how-list">
+              <li><strong>Avanço Contínuo:</strong> O veículo avança automaticamente. Ajuste sua posição lateral suavemente pelas faixas.</li>
+              <li><strong>1000 HP:</strong> Evite bater frontalmente em caminhões, barreiras e absorver saraivadas de tiros inimigos.</li>
+              <li><strong>Destruição Voxel:</strong> Ao zerar o HP dos inimigos, veja-os explodir em dezenas de blocos físicos que quicam na pista!</li>
+              <li><strong>Ondas e Distância:</strong> Quanto maior a distância percorrida, mais ferozes e resistentes serão as frotas de carros e caminhões blindados.</li>
+              <li><strong>Combos:</strong> Destrua inimigos em sequência rápida para elevar seu multiplicador de pontuação até x10!</li>
+              <li><strong>Power-Ups:</strong> Colete cápsulas luminosas deixadas pelos destroços: <em>Vida (+200 HP)</em>, <em>Escudo Protetor</em>, <em>Tiro Rápido</em> e <em>Dano 2X</em>.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-how-back" class="btn btn-primary">ENTENDI, VOLTAR</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELA DE CONFIGURAÇÕES -->
+    <div id="screen-settings" class="screen hidden">
+      <div class="modal-box">
+        <h2 class="modal-title">CONFIGURAÇÕES</h2>
+        <div class="modal-content">
+          <div class="setting-row">
+            <label for="setting-master-vol">Volume Geral</label>
+            <div class="slider-container">
+              <input type="range" id="setting-master-vol" min="0" max="100" value="80">
+              <span id="label-master-vol" class="slider-val">80%</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label for="setting-music-vol">Volume da Música</label>
+            <div class="slider-container">
+              <input type="range" id="setting-music-vol" min="0" max="100" value="65">
+              <span id="label-music-vol" class="slider-val">65%</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label for="setting-sfx-vol">Volume dos Efeitos (SFX)</label>
+            <div class="slider-container">
+              <input type="range" id="setting-sfx-vol" min="0" max="100" value="85">
+              <span id="label-sfx-vol" class="slider-val">85%</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label for="setting-sensitivity">Sensibilidade do Movimento Lateral</label>
+            <div class="slider-container">
+              <input type="range" id="setting-sensitivity" min="50" max="150" value="100">
+              <span id="label-sensitivity" class="slider-val">100%</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label for="setting-shake">Efeito de Camera Shake (Trepidação)</label>
+            <div class="toggle-container">
+              <input type="checkbox" id="setting-shake" checked>
+              <label for="setting-shake" class="toggle-switch"></label>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label for="setting-graphics">Qualidade Gráfica</label>
+            <div class="select-wrapper">
+              <select id="setting-graphics">
+                <option value="low">Baixa (Mais FPS em PCs leves)</option>
+                <option value="medium">Média (Equilibrada)</option>
+                <option value="high" selected>Alta (Máximo de Partículas e Destroços)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-settings-back" class="btn btn-primary">SALVAR E VOLTAR</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELA DE GAME OVER -->
+    <div id="screen-game-over" class="screen hidden">
+      <div class="modal-box game-over-box">
+        <div class="game-over-glow"></div>
+        <h2 class="game-over-title">VEÍCULO DESTRUÍDO</h2>
+        <p class="game-over-subtitle">MISSÃO ENCERRADA</p>
+
+        <div class="game-over-stats">
+          <div class="over-stat-item">
+            <span class="over-label">DISTÂNCIA PERCORRIDA</span>
+            <span id="go-distance" class="over-value">0 m</span>
+          </div>
+          <div class="over-stat-item">
+            <span class="over-label">PONTUAÇÃO FINAL</span>
+            <span id="go-score" class="over-value highlight">0</span>
+          </div>
+          <div class="over-stat-item">
+            <span class="over-label">INIMIGOS ELIMINADOS</span>
+            <span id="go-enemies" class="over-value">0</span>
+          </div>
+          <div class="over-stat-item">
+            <span class="over-label">MAIOR COMBO</span>
+            <span id="go-combo" class="over-value">x1</span>
+          </div>
+          <div class="over-stat-item">
+            <span class="over-label">ONDA ALCANÇADA</span>
+            <span id="go-wave" class="over-value">Onda 1</span>
+          </div>
+        </div>
+
+        <div class="game-over-actions">
+          <button id="btn-game-restart" class="btn btn-primary btn-glow btn-large">JOGAR NOVAMENTE</button>
+          <button id="btn-game-menu" class="btn btn-secondary">MENU PRINCIPAL</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Script do Jogo -->
+  <script src="script.js"></script>
+</body>
+</html>
