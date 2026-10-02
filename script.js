@@ -1,7 +1,7 @@
 /**
  * ============================================================================
- * HOVERCRAFT: TAKEDOWN 3D
- * Jogo Completo de Combate Veicular Voxel em WebGL Nativo & JavaScript Puro
+ * VOXEL ROAD STRIKE 3D
+ * Jogo Completo de Combate Veicular Arcade em WebGL Nativo & JavaScript Puro
  * Sem bibliotecas externas (Three.js, Babylon.js, etc.)
  * ============================================================================
  */
@@ -187,18 +187,18 @@ const Math3D = {
     return out;
   },
 
-  // Projeção de ponto 3D para espaço de tela (X, Y 2D)
+  // Projeção de ponto 3D para espaço de tela (X, Y 2D e profundidade)
   projectToScreen(point3D, viewProjMatrix, width, height) {
     const x = point3D[0], y = point3D[1], z = point3D[2];
     const w = x * viewProjMatrix[3] + y * viewProjMatrix[7] + z * viewProjMatrix[11] + viewProjMatrix[15];
-    if (w <= 0.01) return null; // Atrás da câmera
+    if (w <= 0.05) return null; // Atrás da câmera
 
     const clipX = (x * viewProjMatrix[0] + y * viewProjMatrix[4] + z * viewProjMatrix[8] + viewProjMatrix[12]) / w;
     const clipY = (x * viewProjMatrix[1] + y * viewProjMatrix[5] + z * viewProjMatrix[9] + viewProjMatrix[13]) / w;
 
     return {
       x: (clipX * 0.5 + 0.5) * width,
-      y: (1.0 - (clipY * 0.5 + 0.5)) * height,
+      y: (-clipY * 0.5 + 0.5) * height,
       depth: w
     };
   }
@@ -206,7 +206,136 @@ const Math3D = {
 
 
 /* ============================================================================
-   2. SHADERS GLSL E RENDERIZADOR WEBGL
+   2. CONFIGURAÇÕES CENTRAIS (INIMIGOS, ARMAS, MAPAS)
+   ============================================================================ */
+
+// Identidade central e balanceamento dos tipos de veículos inimigos
+const ENEMY_TYPES = {
+  raptor: {
+    name: 'Raptor',
+    modelKey: 'enemy_raptor',
+    baseHp: 800, // 800 HP obrigatório
+    weapon: 'machinegun', // sempre metralhadora
+    score: 600,
+    speedRel: 0.95,
+    width: 2.2, height: 1.2, depth: 3.4,
+    fireInterval: 1.1,
+    isTruck: false,
+    aiType: 'align'
+  },
+  titan: {
+    name: 'Titan',
+    modelKey: 'enemy_titan',
+    baseHp: 1200, // 1200 HP obrigatório
+    weapon: 'cannon', // sempre canhão
+    score: 1200,
+    speedRel: 0.72,
+    width: 3.2, height: 1.8, depth: 4.2,
+    fireInterval: 2.2,
+    isTruck: true,
+    aiType: 'heavy'
+  },
+  scout: {
+    name: 'Scout Buggy',
+    modelKey: 'enemy_scout',
+    baseHp: 500,
+    weapon: 'machinegun', // metralhadora leve
+    score: 450,
+    speedRel: 0.9,
+    width: 2.0, height: 1.1, depth: 3.0,
+    fireInterval: 1.4,
+    isTruck: false,
+    aiType: 'evasive'
+  },
+  hauler: {
+    name: 'Caminhão Hauler',
+    modelKey: 'enemy_hauler',
+    baseHp: 1500,
+    weapon: 'shotgun', // sempre dispersora / torreta pesada
+    score: 1500,
+    speedRel: 0.68,
+    width: 3.4, height: 2.4, depth: 5.8,
+    fireInterval: 1.9,
+    isTruck: true,
+    aiType: 'steady'
+  }
+};
+
+// Armas do Jogador
+const PLAYER_WEAPONS = {
+  machinegun: {
+    name: 'Metralhadora',
+    fireRate: 8.0, // 8 tiros por segundo obrigatório
+    damage: 20,    // 20 de dano obrigatório
+    range: 165.0,
+    speed: 150.0,
+    color: [1.0, 0.9, 0.15],
+    size: 0.28
+  },
+  shotgun: {
+    name: 'Dispersora',
+    fireRate: 2.4,
+    damage: 50,    // 50 de dano por projétil obrigatório
+    pellets: 3,    // Exatamente 3 balas obrigatório
+    range: 92.0,   // Alcance moderado estendido
+    speed: 120.0,
+    color: [0.0, 0.95, 1.0],
+    size: 0.32
+  },
+  cannon: {
+    name: 'Canhão Pesado',
+    fireRate: 1.2, // Cadência menor que a metralhadora
+    damage: 150,   // 150 de dano obrigatório
+    range: 220.0,
+    speed: 125.0,
+    color: [1.0, 0.25, 0.05],
+    size: 0.75
+  }
+};
+
+// Configurações de Ambientação e Mapas 3D
+const MAP_CONFIGS = {
+  desert: {
+    name: 'Deserto',
+    fogColor: [0.38, 0.28, 0.18],
+    ambientColor: [0.55, 0.45, 0.35],
+    sunColor: [1.0, 0.92, 0.75],
+    lightDir: [0.5, 0.85, 0.2],
+    roadAsphalt: [0.22, 0.20, 0.18],
+    roadShoulder: [0.65, 0.50, 0.30],
+    terrainColor: [0.78, 0.58, 0.32],
+    weather: 'none',
+    obstacles: ['desert_rock', 'barrier', 'wreck']
+  },
+  snow: {
+    name: 'Floresta Nevada',
+    fogColor: [0.28, 0.35, 0.45],
+    ambientColor: [0.48, 0.52, 0.62],
+    sunColor: [0.90, 0.95, 1.0],
+    lightDir: [0.3, 0.9, 0.3],
+    roadAsphalt: [0.15, 0.17, 0.22],
+    roadShoulder: [0.85, 0.90, 0.95],
+    terrainColor: [0.92, 0.95, 0.98],
+    weather: 'snow',
+    obstacles: ['snow_boulder', 'pine_log', 'frozen_crate']
+  },
+  japan_rural: {
+    name: 'Japão Rural',
+    fogColor: [0.24, 0.32, 0.28],
+    ambientColor: [0.45, 0.52, 0.45],
+    sunColor: [0.98, 0.95, 0.85],
+    lightDir: [0.4, 0.8, 0.35],
+    roadAsphalt: [0.18, 0.20, 0.20],
+    roadShoulder: [0.35, 0.45, 0.30],
+    terrainColor: [0.28, 0.52, 0.24],
+    weather: 'sakura',
+    obstacles: ['stone_lantern', 'wooden_gate_beam', 'rural_crate']
+  }
+};
+
+
+/* ============================================================================
+   3. SHADERS GLSL E RENDERIZADOR WEBGL COM SUPORTE A 3D
    ============================================================================ */
 
 const VS_SOURCE = `
@@ -231,21 +360,16 @@ const VS_SOURCE = `
     vec4 worldPos = u_model * vec4(a_position, 1.0);
     gl_Position = u_viewProjection * worldPos;
 
-    // Normal no espaço de mundo (escala uniforme)
     vec3 normal = normalize(mat3(u_model) * a_normal);
-
-    // Iluminação difusa simples (Lambertiana suave)
     float diff = max(dot(normal, normalize(u_lightDir)), 0.0);
     vec3 lighting = u_ambientColor + u_sunColor * diff;
 
-    // Aplica cor dos vértices com iluminação e efeito de flash/tint
     vec3 col = a_color.rgb * lighting;
     if (u_tint.a > 0.0) {
       col = mix(col, u_tint.rgb, u_tint.a);
     }
     v_color = vec4(col, a_color.a);
 
-    // Cálculo da névoa de distância (Atmospheric Fog)
     float dist = length(worldPos.xyz - u_cameraPos);
     v_fogFactor = clamp((dist - u_fogNear) / (u_fogFar - u_fogNear), 0.0, 1.0);
   }
@@ -258,7 +382,6 @@ const FS_SOURCE = `
   uniform vec3 u_fogColor;
 
   void main() {
-    // Mistura suave da cor final com a névoa do horizonte
     vec3 finalColor = mix(v_color.rgb, u_fogColor, v_fogFactor);
     gl_FragColor = vec4(finalColor, v_color.a);
   }
@@ -279,11 +402,9 @@ class WebGLRenderer {
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
 
-    // Inicialização do Programa Shader
     this.program = this.createProgram(VS_SOURCE, FS_SOURCE);
     gl.useProgram(this.program);
 
-    // Localização de Atributos e Uniforms
     this.attribs = {
       position: gl.getAttribLocation(this.program, 'a_position'),
       normal: gl.getAttribLocation(this.program, 'a_normal'),
@@ -303,24 +424,23 @@ class WebGLRenderer {
       fogFar: gl.getUniformLocation(this.program, 'u_fogFar')
     };
 
-    // Parâmetros de Iluminação e Atmosfera
-    this.lightDir = [0.4, 0.9, 0.3];
+    // Parâmetros de iluminação atmosférica inicial
+    this.lightDir = [0.4, 0.85, 0.3];
     this.ambientColor = [0.45, 0.48, 0.55];
     this.sunColor = [0.85, 0.82, 0.75];
     this.fogColor = [0.08, 0.10, 0.18];
     this.fogNear = 60.0;
-    this.fogFar = 220.0;
+    this.fogFar = 260.0;
 
-    // Matrizes de trabalho reutilizáveis
     this.matProj = Math3D.createMat4();
     this.matView = Math3D.createMat4();
     this.matViewProj = Math3D.createMat4();
     this.matModel = Math3D.createMat4();
 
-    // Buffer Dinâmico Compartilhado para Detritos e Partículas
+    // Buffer Dinâmico Compartilhado para Detritos, Projéteis e Partículas
     this.dynamicBuffer = gl.createBuffer();
-    this.dynamicCapacity = 60000; // Vértices dinâmicos suportados
-    this.dynamicArray = new Float32Array(this.dynamicCapacity * 10); // 10 floats por vértice
+    this.dynamicCapacity = 80000;
+    this.dynamicArray = new Float32Array(this.dynamicCapacity * 10);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.dynamicBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.dynamicArray.byteLength, gl.DYNAMIC_DRAW);
 
@@ -365,7 +485,6 @@ class WebGLRenderer {
     }
   }
 
-  // Cria um VBO estático de vértices a partir de um array numérico
   createMesh(vertexData) {
     const gl = this.gl;
     const buffer = gl.createBuffer();
@@ -373,7 +492,7 @@ class WebGLRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexData), gl.STATIC_DRAW);
     return {
       buffer: buffer,
-      vertexCount: vertexData.length / 10 // 3 pos, 3 norm, 4 color
+      vertexCount: vertexData.length / 10
     };
   }
 
@@ -383,9 +502,8 @@ class WebGLRenderer {
     gl.clearColor(this.fogColor[0], this.fogColor[1], this.fogColor[2], 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    // Configura Projeção e Visualização
     const aspect = this.canvas.width / this.canvas.height;
-    Math3D.perspective(this.matProj, (65 * Math.PI) / 180, aspect, 0.5, 400.0);
+    Math3D.perspective(this.matProj, (65 * Math.PI) / 180, aspect, 0.5, 450.0);
     Math3D.lookAt(this.matView, camera.eye, camera.target, camera.up);
     Math3D.multiplyMat4(this.matViewProj, this.matProj, this.matView);
 
@@ -404,7 +522,7 @@ class WebGLRenderer {
   bindMeshAttributes(buffer) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    const stride = 10 * 4; // 10 floats = 40 bytes
+    const stride = 10 * 4;
     gl.enableVertexAttribArray(this.attribs.position);
     gl.vertexAttribPointer(this.attribs.position, 3, gl.FLOAT, false, stride, 0);
 
@@ -428,7 +546,6 @@ class WebGLRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, mesh.vertexCount);
   }
 
-  // Renderiza múltiplos elementos dinâmicos (detritos, partículas) em 1 único lote
   drawDynamicBatch(floatData, count) {
     if (count === 0) return;
     const gl = this.gl;
@@ -436,7 +553,6 @@ class WebGLRenderer {
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, floatData.subarray(0, count * 10));
     this.bindMeshAttributes(this.dynamicBuffer);
 
-    // Matriz identidade de modelo já que os vértices estão no espaço de mundo
     const identity = Math3D.createMat4();
     gl.uniformMatrix4fv(this.uniforms.model, false, identity);
     gl.uniform4f(this.uniforms.tint, 0, 0, 0, 0);
@@ -447,18 +563,16 @@ class WebGLRenderer {
 
 
 /* ============================================================================
-   3. GERADOR DE MODELOS VOXEL PROCEDURAIS 3D
+   4. GERADOR DE MODELOS VOXEL PROCEDURAIS 3D REALISTAS
    ============================================================================ */
 
 const VoxelBuilder = {
-  // Adiciona um paralelepípedo/cubo 3D ao array de vértices
   addBox(vertices, cx, cy, cz, sx, sy, sz, r, g, b, a = 1.0) {
     const hx = sx / 2, hy = sy / 2, hz = sz / 2;
     const x0 = cx - hx, x1 = cx + hx;
     const y0 = cy - hy, y1 = cy + hy;
     const z0 = cz - hz, z1 = cz + hz;
 
-    // Definição das 6 faces: cada face tem Normal e 6 vértices (2 triângulos)
     const faces = [
       // Frente (+Z)
       { norm: [0, 0, 1], quad: [ [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y0, z1], [x1, y1, z1], [x0, y1, z1] ] },
@@ -484,12 +598,53 @@ const VoxelBuilder = {
     }
   },
 
-  // Helper para salvar definição de peças voxel individuais para destruição futura
+  // Adiciona esfera / cápsula facetada 3D para tiros com iluminação e shading
+  addFacetedSphere(vertices, cx, cy, cz, radius, lengthZ, r, g, b, a = 1.0) {
+    const segments = 8;
+    const rings = 4;
+    for (let i = 0; i < rings; i++) {
+      const v0 = i / rings;
+      const v1 = (i + 1) / rings;
+      const phi0 = (v0 - 0.5) * Math.PI;
+      const phi1 = (v1 - 0.5) * Math.PI;
+      const cosP0 = Math.cos(phi0), sinP0 = Math.sin(phi0);
+      const cosP1 = Math.cos(phi1), sinP1 = Math.sin(phi1);
+
+      for (let j = 0; j < segments; j++) {
+        const u0 = j / segments;
+        const u1 = (j + 1) / segments;
+        const theta0 = u0 * Math.PI * 2;
+        const theta1 = u1 * Math.PI * 2;
+
+        const p0 = [cx + Math.cos(theta0) * cosP0 * radius, cy + sinP0 * radius, cz + Math.sin(theta0) * cosP0 * radius + (phi0 > 0 ? lengthZ * 0.5 : -lengthZ * 0.5)];
+        const p1 = [cx + Math.cos(theta1) * cosP0 * radius, cy + sinP0 * radius, cz + Math.sin(theta1) * cosP0 * radius + (phi0 > 0 ? lengthZ * 0.5 : -lengthZ * 0.5)];
+        const p2 = [cx + Math.cos(theta1) * cosP1 * radius, cy + sinP1 * radius, cz + Math.sin(theta1) * cosP1 * radius + (phi1 > 0 ? lengthZ * 0.5 : -lengthZ * 0.5)];
+        const p3 = [cx + Math.cos(theta0) * cosP1 * radius, cy + sinP1 * radius, cz + Math.sin(theta0) * cosP1 * radius + (phi1 > 0 ? lengthZ * 0.5 : -lengthZ * 0.5)];
+
+        // Normal do primeiro triângulo
+        const n0 = [Math.cos(theta0) * cosP0, sinP0, Math.sin(theta0) * cosP0];
+        const n1 = [Math.cos(theta1) * cosP0, sinP0, Math.sin(theta1) * cosP0];
+        const n2 = [Math.cos(theta1) * cosP1, sinP1, Math.sin(theta1) * cosP1];
+        const n3 = [Math.cos(theta0) * cosP1, sinP1, Math.sin(theta0) * cosP1];
+
+        // Triângulo 1 (p0, p1, p2)
+        vertices.push(p0[0], p0[1], p0[2], n0[0], n0[1], n0[2], r, g, b, a);
+        vertices.push(p1[0], p1[1], p1[2], n1[0], n1[1], n1[2], r, g, b, a);
+        vertices.push(p2[0], p2[1], p2[2], n2[0], n2[1], n2[2], r, g, b, a);
+
+        // Triângulo 2 (p0, p2, p3)
+        vertices.push(p0[0], p0[1], p0[2], n0[0], n0[1], n0[2], r, g, b, a);
+        vertices.push(p2[0], p2[1], p2[2], n2[0], n2[1], n2[2], r, g, b, a);
+        vertices.push(p3[0], p3[1], p3[2], n3[0], n3[1], n3[2], r, g, b, a);
+      }
+    }
+  },
+
   createModelDef() {
     return {
-      boxes: [], // { cx, cy, cz, sx, sy, sz, r, g, b, a }
-      add(cx, cy, cz, sx, sy, sz, r, g, b, a = 1.0) {
-        this.boxes.push({ cx, cy, cz, sx, sy, sz, r, g, b, a });
+      boxes: [],
+      add(cx, cy, cz, sx, sy, sz, r, g, b, a = 1.0, type = 'body') {
+        this.boxes.push({ cx, cy, cz, sx, sy, sz, r, g, b, a, type });
         return this;
       },
       bake(renderer) {
@@ -505,199 +660,349 @@ const VoxelBuilder = {
     };
   },
 
-  // Modelos dos Veículos do Jogador
+  // Helper para adicionar roda voxel realista
+  addWheel(m, cx, cy, cz, radius = 0.45, width = 0.35) {
+    // Pneu borracha cinza escura
+    m.add(cx, cy, cz, width, radius * 2, radius * 2, 0.12, 0.12, 0.14, 1.0, 'wheel');
+    // Calota / Roda metálica
+    m.add(cx + (cx > 0 ? 0.04 : -0.04), cy, cz, 0.08, radius * 1.2, radius * 1.2, 0.75, 0.78, 0.82, 1.0, 'wheel');
+  },
+
+  /* ================= JOGADOR ================= */
   buildInterceptor(renderer) {
     const m = this.createModelDef();
-    // Chassi Central
-    m.add(0, 0.4, 0, 1.4, 0.35, 3.2, 0.12, 0.55, 0.85); // Casco azul
-    m.add(0, 0.4, 1.6, 1.1, 0.3, 0.8, 0.1, 0.45, 0.7); // Bico frontal
-    // Cabine de Vidro Ciano
-    m.add(0, 0.75, 0.2, 0.9, 0.4, 1.4, 0.0, 0.95, 1.0, 0.85);
-    // Asas Delta
-    m.add(-1.2, 0.35, -0.4, 1.1, 0.15, 1.8, 0.08, 0.4, 0.7);
-    m.add(1.2, 0.35, -0.4, 1.1, 0.15, 1.8, 0.08, 0.4, 0.7);
-    // Canhões nas Pontas das Asas
-    m.add(-1.7, 0.4, 0.2, 0.2, 0.2, 1.4, 0.25, 0.28, 0.32);
-    m.add(1.7, 0.4, 0.2, 0.2, 0.2, 1.4, 0.25, 0.28, 0.32);
-    // Propulsores Traseiros com Brilho Neon
-    m.add(-0.45, 0.4, -1.7, 0.4, 0.4, 0.4, 0.15, 0.18, 0.22);
-    m.add(0.45, 0.4, -1.7, 0.4, 0.4, 0.4, 0.15, 0.18, 0.22);
-    m.add(-0.45, 0.4, -1.92, 0.25, 0.25, 0.1, 0.0, 0.95, 1.0); // Fogo do motor
-    m.add(0.45, 0.4, -1.92, 0.25, 0.25, 0.1, 0.0, 0.95, 1.0);
-    // Spoiler Traseiro
-    m.add(0, 0.95, -1.4, 1.4, 0.1, 0.4, 0.08, 0.4, 0.7);
+    m.add(0, 0.4, 0, 1.4, 0.35, 3.2, 0.12, 0.55, 0.85, 1.0, 'chassis');
+    m.add(0, 0.4, 1.6, 1.1, 0.3, 0.8, 0.1, 0.45, 0.7, 1.0, 'chassis');
+    m.add(0, 0.75, 0.2, 0.9, 0.4, 1.4, 0.0, 0.95, 1.0, 0.85, 'glass');
+    m.add(-1.2, 0.35, -0.4, 1.1, 0.15, 1.8, 0.08, 0.4, 0.7, 1.0, 'wing');
+    m.add(1.2, 0.35, -0.4, 1.1, 0.15, 1.8, 0.08, 0.4, 0.7, 1.0, 'wing');
+    // Canhões nas Asas
+    m.add(-1.4, 0.4, 0.4, 0.22, 0.22, 1.4, 0.25, 0.28, 0.32, 1.0, 'weapon');
+    m.add(1.4, 0.4, 0.4, 0.22, 0.22, 1.4, 0.25, 0.28, 0.32, 1.0, 'weapon');
+    // Turbinas Traseiras
+    m.add(-0.45, 0.4, -1.7, 0.4, 0.4, 0.4, 0.15, 0.18, 0.22, 1.0, 'engine');
+    m.add(0.45, 0.4, -1.7, 0.4, 0.4, 0.4, 0.15, 0.18, 0.22, 1.0, 'engine');
+    m.add(-0.45, 0.4, -1.92, 0.25, 0.25, 0.1, 0.0, 0.95, 1.0, 1.0, 'glow');
+    m.add(0.45, 0.4, -1.92, 0.25, 0.25, 0.1, 0.0, 0.95, 1.0, 1.0, 'glow');
+    m.add(0, 0.95, -1.4, 1.4, 0.1, 0.4, 0.08, 0.4, 0.7, 1.0, 'spoiler');
     return m.bake(renderer);
   },
 
-  buildRaptor(renderer) {
+  buildRaptorPlayer(renderer) {
     const m = this.createModelDef();
-    // Chassi Fino e Esportivo Laranja/Amarelo
-    m.add(0, 0.32, 0, 1.1, 0.28, 3.4, 0.98, 0.45, 0.05); // Laranja vivo
-    m.add(0, 0.32, 1.8, 0.6, 0.22, 1.0, 1.0, 0.75, 0.0); // Bico afilado
-    // Cabine Baixa e Agressiva
-    m.add(0, 0.6, 0.1, 0.7, 0.3, 1.2, 0.2, 0.1, 0.3, 0.9);
-    // Asas Diagonais / Flecha Invertida
-    m.add(-1.0, 0.3, 0.2, 0.9, 0.12, 1.4, 0.98, 0.45, 0.05);
-    m.add(1.0, 0.3, 0.2, 0.9, 0.12, 1.4, 0.98, 0.45, 0.05);
-    // Estabilizadores Verticais Duplos
-    m.add(-0.6, 0.75, -1.2, 0.1, 0.6, 0.8, 1.0, 0.75, 0.0);
-    m.add(0.6, 0.75, -1.2, 0.1, 0.6, 0.8, 1.0, 0.75, 0.0);
-    // Turbina Central Poderosa
-    m.add(0, 0.35, -1.8, 0.5, 0.5, 0.5, 0.15, 0.15, 0.18);
-    m.add(0, 0.35, -2.06, 0.35, 0.35, 0.1, 1.0, 0.5, 0.0); // Brilho de fogo
+    m.add(0, 0.32, 0, 1.1, 0.28, 3.4, 0.98, 0.45, 0.05, 1.0, 'chassis');
+    m.add(0, 0.32, 1.8, 0.6, 0.22, 1.0, 1.0, 0.75, 0.0, 1.0, 'chassis');
+    m.add(0, 0.6, 0.1, 0.7, 0.3, 1.2, 0.2, 0.1, 0.3, 0.9, 'glass');
+    m.add(-1.4, 0.35, 0.2, 0.2, 0.2, 1.4, 0.3, 0.3, 0.35, 1.0, 'weapon');
+    m.add(1.4, 0.35, 0.2, 0.2, 0.2, 1.4, 0.3, 0.3, 0.35, 1.0, 'weapon');
+    m.add(-0.6, 0.75, -1.2, 0.1, 0.6, 0.8, 1.0, 0.75, 0.0, 1.0, 'spoiler');
+    m.add(0.6, 0.75, -1.2, 0.1, 0.6, 0.8, 1.0, 0.75, 0.0, 1.0, 'spoiler');
+    m.add(0, 0.35, -1.8, 0.5, 0.5, 0.5, 0.15, 0.15, 0.18, 1.0, 'engine');
+    m.add(0, 0.35, -2.06, 0.35, 0.35, 0.1, 1.0, 0.5, 0.0, 1.0, 'glow');
     return m.bake(renderer);
   },
 
-  buildTitan(renderer) {
+  buildTitanPlayer(renderer) {
     const m = this.createModelDef();
-    // Blindado Pesado Verde Militar / Camo / Aço
-    m.add(0, 0.5, 0, 2.2, 0.55, 3.8, 0.22, 0.38, 0.25); // Casco principal largo
-    m.add(0, 0.95, -0.2, 1.6, 0.45, 2.0, 0.18, 0.3, 0.2); // Torre blindada
-    // Para-choque Reforçado de Aríete
-    m.add(0, 0.4, 2.0, 2.4, 0.6, 0.5, 0.4, 0.42, 0.45);
-    // Placas de Blindagem Lateral
-    m.add(-1.25, 0.45, 0, 0.3, 0.5, 3.4, 0.15, 0.25, 0.16);
-    m.add(1.25, 0.45, 0, 0.3, 0.5, 3.4, 0.15, 0.25, 0.16);
-    // Canhão Duplo no Topo
-    m.add(-0.35, 1.25, 0.8, 0.25, 0.25, 2.2, 0.1, 0.1, 0.12);
-    m.add(0.35, 1.25, 0.8, 0.25, 0.25, 2.2, 0.1, 0.1, 0.12);
-    // Detalhes de Alerta Amarelos
-    m.add(-1.0, 0.75, 1.7, 0.3, 0.1, 0.3, 1.0, 0.8, 0.0);
-    m.add(1.0, 0.75, 1.7, 0.3, 0.1, 0.3, 1.0, 0.8, 0.0);
+    m.add(0, 0.5, 0, 2.2, 0.55, 3.8, 0.22, 0.38, 0.25, 1.0, 'chassis');
+    m.add(0, 0.95, -0.2, 1.6, 0.45, 2.0, 0.18, 0.3, 0.2, 1.0, 'cab');
+    m.add(0, 0.4, 2.0, 2.4, 0.6, 0.5, 0.4, 0.42, 0.45, 1.0, 'bumper');
+    m.add(-1.25, 0.45, 0, 0.3, 0.5, 3.4, 0.15, 0.25, 0.16, 1.0, 'armor');
+    m.add(1.25, 0.45, 0, 0.3, 0.5, 3.4, 0.15, 0.25, 0.16, 1.0, 'armor');
+    m.add(-0.35, 1.25, 0.8, 0.25, 0.25, 2.2, 0.1, 0.1, 0.12, 1.0, 'weapon');
+    m.add(0.35, 1.25, 0.8, 0.25, 0.25, 2.2, 0.1, 0.1, 0.12, 1.0, 'weapon');
     return m.bake(renderer);
   },
 
-  // Modelos dos Inimigos
+  /* ================= INIMIGOS (COM CARROCERIA, RODAS, CABINE, PARA-CHOQUE, ARMAS) ================= */
+
+  // Inimigo Raptor: Carro esportivo de ataque rápido com 4 rodas, para-choques e metralhadoras duplas
+  buildEnemyRaptor(renderer) {
+    const m = this.createModelDef();
+    // Carroceria principal vermelha com listras pretas
+    m.add(0, 0.45, 0, 1.5, 0.4, 3.2, 0.85, 0.12, 0.15, 1.0, 'chassis');
+    m.add(0, 0.4, 1.6, 1.3, 0.35, 0.8, 0.95, 0.15, 0.2, 1.0, 'hood');
+    // Para-choque dianteiro agressivo com faróis amarelos
+    m.add(0, 0.35, 2.05, 1.55, 0.3, 0.25, 0.15, 0.15, 0.18, 1.0, 'bumper');
+    m.add(-0.55, 0.38, 2.18, 0.25, 0.15, 0.05, 1.0, 0.85, 0.1, 1.0, 'lights');
+    m.add(0.55, 0.38, 2.18, 0.25, 0.15, 0.05, 1.0, 0.85, 0.1, 1.0, 'lights');
+    // Cabine esportiva com vidros fumê escuros
+    m.add(0, 0.75, -0.1, 1.2, 0.35, 1.6, 0.12, 0.12, 0.16, 1.0, 'cab');
+    m.add(0, 0.78, 0.6, 1.1, 0.28, 0.2, 0.1, 0.7, 0.9, 0.85, 'glass'); // Parabrisa
+    // 4 Rodas esportivas com calotas
+    this.addWheel(m, -0.85, 0.35, 1.0, 0.36, 0.25);
+    this.addWheel(m, 0.85, 0.35, 1.0, 0.36, 0.25);
+    this.addWheel(m, -0.85, 0.35, -1.0, 0.36, 0.25);
+    this.addWheel(m, 0.85, 0.35, -1.0, 0.36, 0.25);
+    // Metralhadoras frontais duplas nos para-lamas
+    m.add(-0.7, 0.55, 0.8, 0.18, 0.18, 1.6, 0.25, 0.28, 0.32, 1.0, 'weapon');
+    m.add(0.7, 0.55, 0.8, 0.18, 0.18, 1.6, 0.25, 0.28, 0.32, 1.0, 'weapon');
+    // Aerofólio traseiro de competição
+    m.add(0, 0.95, -1.5, 1.5, 0.1, 0.35, 0.1, 0.1, 0.12, 1.0, 'spoiler');
+    m.add(-0.6, 0.75, -1.5, 0.1, 0.35, 0.2, 0.85, 0.12, 0.15, 1.0, 'spoiler');
+    m.add(0.6, 0.75, -1.5, 0.1, 0.35, 0.2, 0.85, 0.12, 0.15, 1.0, 'spoiler');
+    return m.bake(renderer);
+  },
+
+  // Inimigo Titan: Tanque de Assalto Blindado Pesado com 6 Rodas, Aríete e Canhão Pesado
+  buildEnemyTitan(renderer) {
+    const m = this.createModelDef();
+    // Chassi blindado verde oliva militar
+    m.add(0, 0.6, 0, 2.5, 0.6, 4.4, 0.24, 0.32, 0.22, 1.0, 'chassis');
+    // Para-choque aríete frontal de aço reforçado com faixas amarelas
+    m.add(0, 0.5, 2.3, 2.7, 0.7, 0.5, 0.35, 0.38, 0.42, 1.0, 'bumper');
+    m.add(-0.9, 0.5, 2.56, 0.3, 0.5, 0.05, 1.0, 0.75, 0.0, 1.0, 'stripes');
+    m.add(0.9, 0.5, 2.56, 0.3, 0.5, 0.05, 1.0, 0.75, 0.0, 1.0, 'stripes');
+    // Cabine blindada com fendas de visão
+    m.add(0, 1.05, 0.3, 1.8, 0.45, 1.8, 0.2, 0.26, 0.18, 1.0, 'cab');
+    m.add(0, 1.1, 1.1, 1.5, 0.18, 0.2, 0.1, 0.8, 0.9, 0.9, 'glass');
+    // 6 Rodas pesadas off-road com esteiras laterais
+    this.addWheel(m, -1.35, 0.45, 1.3, 0.45, 0.35);
+    this.addWheel(m, 1.35, 0.45, 1.3, 0.45, 0.35);
+    this.addWheel(m, -1.35, 0.45, 0.0, 0.45, 0.35);
+    this.addWheel(m, 1.35, 0.45, 0.0, 0.45, 0.35);
+    this.addWheel(m, -1.35, 0.45, -1.3, 0.45, 0.35);
+    this.addWheel(m, 1.35, 0.45, -1.3, 0.45, 0.35);
+    // Blindagem lateral sobre as rodas
+    m.add(-1.4, 0.85, 0, 0.25, 0.3, 4.2, 0.18, 0.24, 0.16, 1.0, 'armor');
+    m.add(1.4, 0.85, 0, 0.25, 0.3, 4.2, 0.18, 0.24, 0.16, 1.0, 'armor');
+    // Torre de Canhão Pesado giratória no teto
+    m.add(0, 1.45, -0.2, 1.2, 0.45, 1.4, 0.15, 0.18, 0.2, 1.0, 'turret');
+    m.add(0, 1.45, 1.2, 0.35, 0.35, 2.6, 0.1, 0.1, 0.12, 1.0, 'weapon'); // Tubo maciço do canhão
+    m.add(0, 1.45, 2.5, 0.45, 0.45, 0.3, 0.2, 0.22, 0.25, 1.0, 'weapon'); // Freio de boca
+    return m.bake(renderer);
+  },
+
+  // Inimigo Scout: Buggy Ágil com Gaiola de Proteção, 4 Rodas Off-road e Metralhadora
   buildEnemyScout(renderer) {
     const m = this.createModelDef();
-    // Carro Leve Amarelo e Preto
-    m.add(0, 0.35, 0, 1.2, 0.3, 2.4, 0.95, 0.85, 0.1);
-    m.add(0, 0.6, -0.2, 0.9, 0.3, 1.2, 0.15, 0.15, 0.2);
-    m.add(0, 0.35, 1.3, 0.9, 0.2, 0.4, 0.8, 0.2, 0.2); // Faixa preta/vermelha
+    m.add(0, 0.4, 0, 1.3, 0.35, 2.8, 0.95, 0.65, 0.05, 1.0, 'chassis'); // Laranja desértico
+    m.add(0, 0.35, 1.5, 1.1, 0.25, 0.5, 0.2, 0.2, 0.25, 1.0, 'bumper');
+    // Gaiola tubular / Santantônio
+    m.add(0, 0.85, -0.2, 1.0, 0.6, 1.4, 0.15, 0.15, 0.18, 1.0, 'cage');
+    m.add(0, 0.85, 0.4, 0.8, 0.4, 0.1, 0.1, 0.8, 0.9, 0.8, 'glass');
+    // 4 Grandes Rodas
+    this.addWheel(m, -0.85, 0.4, 0.9, 0.4, 0.3);
+    this.addWheel(m, 0.85, 0.4, 0.9, 0.4, 0.3);
+    this.addWheel(m, -0.85, 0.4, -0.9, 0.4, 0.3);
+    this.addWheel(m, 0.85, 0.4, -0.9, 0.4, 0.3);
+    // Metralhadora montada no teto
+    m.add(0, 1.3, 0.1, 0.2, 0.2, 1.2, 0.25, 0.25, 0.3, 1.0, 'weapon');
     return m.bake(renderer);
   },
 
-  buildEnemyCruiser(renderer) {
-    const m = this.createModelDef();
-    // Carro Armado Roxo/Ciano
-    m.add(0, 0.4, 0, 1.4, 0.35, 2.8, 0.55, 0.15, 0.75);
-    m.add(0, 0.7, -0.1, 1.0, 0.35, 1.5, 0.15, 0.15, 0.25);
-    // Armas Laterais
-    m.add(-0.85, 0.45, 0.4, 0.2, 0.2, 1.2, 0.2, 0.2, 0.2);
-    m.add(0.85, 0.45, 0.4, 0.2, 0.2, 1.2, 0.2, 0.2, 0.2);
-    return m.bake(renderer);
-  },
-
-  buildEnemyEnforcer(renderer) {
-    const m = this.createModelDef();
-    // Carro Pesado Preto e Laranja
-    m.add(0, 0.45, 0, 1.6, 0.45, 3.2, 0.15, 0.15, 0.18);
-    m.add(0, 0.8, -0.2, 1.2, 0.4, 1.6, 0.95, 0.4, 0.05);
-    // Aríete de Ferro
-    m.add(0, 0.45, 1.7, 1.8, 0.5, 0.4, 0.45, 0.48, 0.52);
-    return m.bake(renderer);
-  },
-
+  // Inimigo Hauler: Caminhão Pesado com Cabine Real, 6 Rodas Duplas, Baú Blindado e Dispersora
   buildEnemyHauler(renderer) {
     const m = this.createModelDef();
-    // Caminhão de Carga Azul e Cinza
-    // Cabine Frontal
-    m.add(0, 0.9, 2.2, 2.0, 1.2, 1.8, 0.15, 0.45, 0.85);
-    m.add(0, 1.3, 2.8, 1.6, 0.4, 0.5, 0.1, 0.8, 0.9); // Vidro da cabine
-    // Contêiner Traseiro Enorme
-    m.add(0, 1.1, -1.0, 2.2, 1.6, 4.4, 0.7, 0.72, 0.75);
-    m.add(0, 1.1, -1.0, 2.24, 1.4, 4.2, 0.15, 0.45, 0.85); // Listra do baú
-    // Torre de Tiro no Teto do Contêiner
-    m.add(0, 2.05, 0.2, 0.5, 0.3, 0.5, 0.2, 0.2, 0.25);
-    m.add(0, 2.05, 0.8, 0.15, 0.15, 1.0, 0.1, 0.1, 0.1);
+    // Cabine Frontal Alta (Estilo Truck Europeu / Americano)
+    m.add(0, 1.1, 2.2, 2.2, 1.4, 1.8, 0.15, 0.35, 0.75, 1.0, 'cab'); // Azul marinho
+    m.add(0, 1.4, 2.9, 1.8, 0.55, 0.25, 0.1, 0.8, 0.95, 0.85, 'glass'); // Parabrisa amplo
+    // Grade cromada do motor e para-choque
+    m.add(0, 0.6, 3.1, 2.0, 0.6, 0.3, 0.65, 0.68, 0.72, 1.0, 'bumper');
+    // Contêiner / Baú traseiro gigante blindado
+    m.add(0, 1.35, -1.0, 2.4, 1.8, 4.8, 0.75, 0.76, 0.8, 1.0, 'container');
+    m.add(0, 1.35, -1.0, 2.45, 1.5, 4.5, 0.15, 0.35, 0.75, 1.0, 'container'); // Listra lateral
+    // 6 Rodas Duplas de Caminhão
+    this.addWheel(m, -1.3, 0.5, 2.1, 0.5, 0.35);
+    this.addWheel(m, 1.3, 0.5, 2.1, 0.5, 0.35);
+    this.addWheel(m, -1.3, 0.5, -0.6, 0.5, 0.35);
+    this.addWheel(m, 1.3, 0.5, -0.6, 0.5, 0.35);
+    this.addWheel(m, -1.3, 0.5, -2.1, 0.5, 0.35);
+    this.addWheel(m, 1.3, 0.5, -2.1, 0.5, 0.35);
+    // Torre Dupla Dispersora no Teto
+    m.add(0, 2.4, 0.2, 0.6, 0.35, 0.6, 0.2, 0.2, 0.25, 1.0, 'turret');
+    m.add(-0.25, 2.4, 0.8, 0.18, 0.18, 1.4, 0.1, 0.1, 0.15, 1.0, 'weapon');
+    m.add(0.25, 2.4, 0.8, 0.18, 0.18, 1.4, 0.1, 0.1, 0.15, 1.0, 'weapon');
     return m.bake(renderer);
   },
 
-  buildEnemyBehemoth(renderer) {
+  /* ================= CENÁRIOS E MAPAS ================= */
+
+  // Terreno e Props do Deserto
+  buildDesertMesa(renderer) {
     const m = this.createModelDef();
-    // Caminhão Blindado de Guerra (Fortaleza Móvel Vermelha/Cinza)
-    m.add(0, 0.8, 0, 2.8, 1.0, 6.2, 0.2, 0.22, 0.25); // Chassi base gigante
-    m.add(0, 1.5, 1.8, 2.4, 1.0, 2.2, 0.75, 0.1, 0.15); // Cabine blindada de assalto
-    m.add(0, 1.6, -1.4, 2.6, 1.2, 3.8, 0.65, 0.12, 0.15); // Compartimento de munição
-    // Torres Duplas no Teto
-    m.add(-0.7, 2.4, -0.6, 0.6, 0.4, 0.6, 0.12, 0.12, 0.15);
-    m.add(-0.7, 2.4, 0.1, 0.2, 0.2, 1.4, 0.05, 0.05, 0.08);
-    m.add(0.7, 2.4, -0.6, 0.6, 0.4, 0.6, 0.12, 0.12, 0.15);
-    m.add(0.7, 2.4, 0.1, 0.2, 0.2, 1.4, 0.05, 0.05, 0.08);
-    // Para-choque Pesado
-    m.add(0, 0.6, 3.2, 3.0, 0.8, 0.6, 0.1, 0.1, 0.1);
+    m.add(0, 8.0, 0, 20.0, 16.0, 20.0, 0.75, 0.52, 0.32);
+    m.add(0, 16.5, 0, 16.0, 4.0, 16.0, 0.82, 0.58, 0.36);
     return m.bake(renderer);
   },
 
-  // Obstáculos da Pista
+  buildDesertCactus(renderer) {
+    const m = this.createModelDef();
+    m.add(0, 4.0, 0, 1.0, 8.0, 1.0, 0.2, 0.65, 0.25);
+    m.add(-1.8, 4.5, 0, 2.6, 0.9, 0.9, 0.2, 0.65, 0.25);
+    m.add(-2.6, 6.0, 0, 0.9, 3.5, 0.9, 0.2, 0.65, 0.25);
+    m.add(1.8, 3.5, 0, 2.6, 0.9, 0.9, 0.2, 0.65, 0.25);
+    m.add(2.6, 5.0, 0, 0.9, 3.5, 0.9, 0.2, 0.65, 0.25);
+    return m.bake(renderer);
+  },
+
+  // Terreno e Props da Floresta Nevada
+  buildSnowPine(renderer) {
+    const m = this.createModelDef();
+    m.add(0, 3.0, 0, 1.4, 6.0, 1.4, 0.35, 0.22, 0.15); // Tronco marrom
+    // Camadas de copas verdes com coberturas grossas de neve
+    m.add(0, 6.0, 0, 8.0, 2.5, 8.0, 0.15, 0.35, 0.2);
+    m.add(0, 7.0, 0, 7.8, 0.9, 7.8, 0.92, 0.95, 0.98); // Neve camada 1
+    m.add(0, 9.0, 0, 6.0, 2.5, 6.0, 0.15, 0.35, 0.2);
+    m.add(0, 10.0, 0, 5.8, 0.9, 5.8, 0.92, 0.95, 0.98); // Neve camada 2
+    m.add(0, 12.0, 0, 4.0, 2.5, 4.0, 0.15, 0.35, 0.2);
+    m.add(0, 13.0, 0, 3.8, 0.9, 3.8, 0.92, 0.95, 0.98); // Neve camada 3
+    m.add(0, 14.5, 0, 1.8, 1.8, 1.8, 0.92, 0.95, 0.98); // Topo nevado
+    return m.bake(renderer);
+  },
+
+  buildSnowMountain(renderer) {
+    const m = this.createModelDef();
+    m.add(0, 14.0, 0, 22.0, 28.0, 22.0, 0.3, 0.34, 0.4);
+    m.add(0, 28.0, 0, 12.0, 12.0, 12.0, 0.92, 0.95, 0.98);
+    return m.bake(renderer);
+  },
+
+  // Terreno e Props do Japão Rural (Tradicional, NÃO Tokyo/Neon)
+  buildJapanMinka(renderer) {
+    const m = this.createModelDef();
+    // Casa Tradicional Japonesa Minka com paredes de madeira/shoji e telhado escuro curvado
+    m.add(0, 2.2, 0, 10.0, 4.4, 7.0, 0.85, 0.82, 0.75); // Paredes claras
+    m.add(0, 2.2, 0, 10.2, 4.4, 0.3, 0.35, 0.22, 0.15); // Pilares de madeira escura
+    m.add(0, 2.2, 3.52, 3.0, 2.5, 0.1, 0.35, 0.22, 0.15); // Porta shoji
+    // Telhado tradicional inclinado com beirais largos escuros
+    m.add(0, 5.0, 0, 12.5, 1.5, 9.5, 0.18, 0.20, 0.22);
+    m.add(0, 6.2, 0, 9.5, 1.4, 7.0, 0.15, 0.17, 0.19);
+    m.add(0, 7.1, 0, 7.0, 0.8, 5.0, 0.12, 0.14, 0.16);
+    return m.bake(renderer);
+  },
+
+  buildJapanTorii(renderer) {
+    const m = this.createModelDef();
+    // Portal Torii Vermelho Xintoísta Tradicional
+    const red = [0.85, 0.15, 0.12];
+    m.add(-3.2, 5.0, 0, 0.9, 10.0, 0.9, red[0], red[1], red[2]); // Coluna esquerda
+    m.add(3.2, 5.0, 0, 0.9, 10.0, 0.9, red[0], red[1], red[2]);  // Coluna direita
+    m.add(0, 8.2, 0, 8.5, 0.8, 0.8, red[0], red[1], red[2]);    // Trave horizontal intermediária
+    m.add(0, 10.2, 0, 10.5, 1.1, 1.2, red[0], red[1], red[2]);  // Trave horizontal superior
+    m.add(0, 10.8, 0, 11.2, 0.35, 1.4, 0.12, 0.12, 0.14);       // Topo preto do Torii
+    return m.bake(renderer);
+  },
+
+  buildJapanSakura(renderer) {
+    const m = this.createModelDef();
+    // Cerejeira em Flor (Sakura)
+    m.add(0, 3.2, 0, 1.2, 6.4, 1.2, 0.38, 0.25, 0.18); // Tronco retorcido
+    // Galhos
+    m.add(-1.8, 5.2, 0, 2.5, 0.7, 0.7, 0.38, 0.25, 0.18);
+    m.add(1.8, 5.5, 0, 2.5, 0.7, 0.7, 0.38, 0.25, 0.18);
+    // Copas volumosas de flores cor-de-rosa suave
+    const pink1 = [0.98, 0.72, 0.82];
+    const pink2 = [0.95, 0.60, 0.75];
+    m.add(0, 7.5, 0, 7.0, 3.5, 7.0, pink1[0], pink1[1], pink1[2]);
+    m.add(-2.2, 6.8, 0.5, 4.5, 2.8, 4.5, pink2[0], pink2[1], pink2[2]);
+    m.add(2.2, 7.0, -0.5, 4.5, 2.8, 4.5, pink2[0], pink2[1], pink2[2]);
+    m.add(0, 9.2, 0, 4.5, 2.0, 4.5, pink1[0], pink1[1], pink1[2]);
+    return m.bake(renderer);
+  },
+
+  buildJapanLantern(renderer) {
+    const m = this.createModelDef();
+    // Lanterna de Pedra Japonesa (Ishidoro)
+    const stone = [0.55, 0.58, 0.60];
+    m.add(0, 0.4, 0, 1.2, 0.8, 1.2, stone[0], stone[1], stone[2]); // Base
+    m.add(0, 1.6, 0, 0.6, 1.8, 0.6, stone[0], stone[1], stone[2]); // Poste
+    m.add(0, 2.8, 0, 1.4, 0.6, 1.4, stone[0], stone[1], stone[2]); // Plataforma
+    m.add(0, 3.5, 0, 1.0, 1.0, 1.0, 0.95, 0.85, 0.45);            // Janela com luz quente suave
+    m.add(0, 4.3, 0, 1.6, 0.6, 1.6, stone[0], stone[1], stone[2]); // Telhado de pedra
+    return m.bake(renderer);
+  },
+
+  /* ================= OBSTÁCULOS ================= */
+  buildDesertRock(renderer) {
+    const m = this.createModelDef();
+    m.add(0, 0.9, 0, 2.6, 1.8, 2.4, 0.72, 0.48, 0.28);
+    m.add(0.4, 1.6, -0.2, 1.8, 1.2, 1.8, 0.65, 0.42, 0.24);
+    return m.bake(renderer);
+  },
+
+  buildSnowBoulder(renderer) {
+    const m = this.createModelDef();
+    m.add(0, 0.9, 0, 2.6, 1.8, 2.4, 0.45, 0.48, 0.52);
+    m.add(0, 1.8, 0, 2.4, 0.6, 2.2, 0.92, 0.95, 0.98); // Cobertura de neve
+    return m.bake(renderer);
+  },
+
+  buildPineLog(renderer) {
+    const m = this.createModelDef();
+    m.add(0, 0.6, 0, 3.6, 0.9, 1.2, 0.35, 0.22, 0.15); // Tronco de pinheiro caído
+    m.add(0, 1.1, 0, 3.4, 0.3, 0.9, 0.92, 0.95, 0.98); // Neve sobre o tronco
+    return m.bake(renderer);
+  },
+
   buildBarrier(renderer) {
     const m = this.createModelDef();
-    m.add(0, 0.4, 0, 2.8, 0.8, 0.7, 0.85, 0.85, 0.88); // Concreto
-    m.add(-0.7, 0.4, 0.02, 0.6, 0.5, 0.72, 0.95, 0.4, 0.05); // Faixa laranja
-    m.add(0.7, 0.4, 0.02, 0.6, 0.5, 0.72, 0.95, 0.4, 0.05);
-    return m.bake(renderer);
-  },
-
-  buildCrate(renderer) {
-    const m = this.createModelDef();
-    m.add(0, 0.8, 0, 1.6, 1.6, 1.6, 0.8, 0.5, 0.2); // Caixa de madeira/metal
-    m.add(0, 0.8, 0, 1.65, 0.2, 1.65, 0.4, 0.25, 0.1); // Cinta de reforço
+    m.add(0, 0.45, 0, 3.0, 0.9, 0.8, 0.85, 0.85, 0.88);
+    m.add(-0.7, 0.45, 0.02, 0.7, 0.5, 0.82, 0.95, 0.4, 0.05);
+    m.add(0.7, 0.45, 0.02, 0.7, 0.5, 0.82, 0.95, 0.4, 0.05);
     return m.bake(renderer);
   },
 
   buildWreck(renderer) {
     const m = this.createModelDef();
-    m.add(0, 0.35, 0, 1.6, 0.5, 2.6, 0.2, 0.2, 0.22); // Carcaça torcida
-    m.add(0.2, 0.65, -0.2, 0.8, 0.4, 0.9, 0.15, 0.15, 0.15);
-    m.add(-0.3, 0.3, 0.8, 0.5, 0.3, 0.6, 0.8, 0.25, 0.05); // Detalhe em brasa
+    m.add(0, 0.4, 0, 1.8, 0.6, 2.8, 0.22, 0.22, 0.25);
+    m.add(0.3, 0.7, -0.3, 0.9, 0.5, 1.0, 0.18, 0.18, 0.2);
+    m.add(-0.4, 0.35, 0.8, 0.6, 0.4, 0.7, 0.85, 0.3, 0.05);
     return m.bake(renderer);
   },
 
-  buildCone(renderer) {
+  buildWoodenBeam(renderer) {
     const m = this.createModelDef();
-    m.add(0, 0.05, 0, 0.7, 0.1, 0.7, 0.1, 0.1, 0.1);
-    m.add(0, 0.35, 0, 0.45, 0.5, 0.45, 1.0, 0.4, 0.0);
-    m.add(0, 0.4, 0, 0.38, 0.2, 0.38, 0.95, 0.95, 0.95);
+    m.add(0, 0.5, 0, 3.4, 0.8, 1.0, 0.45, 0.28, 0.18);
+    m.add(-1.2, 0.8, 0, 0.4, 0.6, 0.4, 0.35, 0.2, 0.12);
+    m.add(1.2, 0.8, 0, 0.4, 0.6, 0.4, 0.35, 0.2, 0.12);
     return m.bake(renderer);
   },
 
-  // Power-Ups Colecionáveis (Tokens 3D Flutuantes)
+  buildCrate(renderer) {
+    const m = this.createModelDef();
+    m.add(0, 0.8, 0, 1.6, 1.6, 1.6, 0.65, 0.45, 0.22);
+    m.add(0, 0.8, 0, 1.65, 0.2, 1.65, 0.35, 0.2, 0.1);
+    return m.bake(renderer);
+  },
+
+  /* ================= POWER-UPS ================= */
   buildTokenHealth(renderer) {
     const m = this.createModelDef();
-    // Cruz Verde
-    m.add(0, 0.6, 0, 0.3, 0.9, 0.3, 0.1, 0.9, 0.3);
-    m.add(0, 0.6, 0, 0.9, 0.3, 0.3, 0.1, 0.9, 0.3);
+    // Cruz Verde com símbolo '+' nítido e luminoso
+    const green = [0.08, 0.95, 0.35];
+    m.add(0, 0.7, 0, 0.35, 1.1, 0.35, green[0], green[1], green[2]);
+    m.add(0, 0.7, 0, 1.1, 0.35, 0.35, green[0], green[1], green[2]);
+    // Núcleo branco no centro
+    m.add(0, 0.7, 0, 0.4, 0.4, 0.4, 1.0, 1.0, 1.0);
     return m.bake(renderer);
   },
 
   buildTokenShield(renderer) {
     const m = this.createModelDef();
-    // Escudo Hexagonal Ciano
-    m.add(0, 0.6, 0, 0.8, 0.8, 0.25, 0.0, 0.8, 1.0);
-    m.add(0, 0.6, 0.05, 0.4, 0.4, 0.2, 1.0, 1.0, 1.0);
+    m.add(0, 0.7, 0, 0.9, 0.9, 0.3, 0.0, 0.85, 1.0);
+    m.add(0, 0.7, 0.05, 0.45, 0.45, 0.25, 1.0, 1.0, 1.0);
     return m.bake(renderer);
   },
 
   buildTokenRapid(renderer) {
     const m = this.createModelDef();
-    // Raio Amarelo
-    m.add(0, 0.75, 0, 0.25, 0.5, 0.25, 1.0, 0.85, 0.0);
-    m.add(0.15, 0.6, 0, 0.4, 0.2, 0.25, 1.0, 0.85, 0.0);
-    m.add(0, 0.4, 0, 0.25, 0.5, 0.25, 1.0, 0.85, 0.0);
+    m.add(0, 0.85, 0, 0.3, 0.6, 0.3, 1.0, 0.85, 0.0);
+    m.add(0.2, 0.7, 0, 0.5, 0.25, 0.3, 1.0, 0.85, 0.0);
+    m.add(0, 0.45, 0, 0.3, 0.6, 0.3, 1.0, 0.85, 0.0);
     return m.bake(renderer);
   },
 
   buildTokenDamage(renderer) {
     const m = this.createModelDef();
-    // Estrela/Espada Vermelha
-    m.add(0, 0.6, 0, 0.7, 0.7, 0.25, 1.0, 0.1, 0.3);
-    m.add(0, 0.6, 0, 0.35, 0.35, 0.35, 1.0, 0.8, 0.2);
+    m.add(0, 0.7, 0, 0.8, 0.8, 0.3, 1.0, 0.15, 0.25);
+    m.add(0, 0.7, 0, 0.4, 0.4, 0.4, 1.0, 0.85, 0.2);
     return m.bake(renderer);
   },
 
   buildShieldBubble(renderer) {
     const m = this.createModelDef();
-    const radius = 2.4;
+    const radius = 2.5;
     for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
       const x = Math.cos(a) * radius;
       const z = Math.sin(a) * radius;
@@ -710,7 +1015,7 @@ const VoxelBuilder = {
 
 
 /* ============================================================================
-   4. SISTEMA DE ÁUDIO PROCEDURAL (WEB AUDIO API)
+   5. SISTEMA DE ÁUDIO PROCEDURAL DE ALTA QUALIDADE (WEB AUDIO API)
    ============================================================================ */
 
 class SoundSystem {
@@ -719,11 +1024,9 @@ class SoundSystem {
     this.masterGain = null;
     this.musicGain = null;
     this.sfxGain = null;
-    this.isMuted = false;
     this.musicTimer = null;
     this.isPlayingMusic = false;
 
-    // Configurações de volume
     this.volumes = {
       master: 0.8,
       music: 0.65,
@@ -780,103 +1083,36 @@ class SoundSystem {
     }
   }
 
-  // Tiros Procedurais
-  playLaser() {
+  /* --- Sons do Jogador (Agradáveis, Rápidos, Sem agudos irritantes) --- */
+
+  // Metralhadora do Jogador: 8 tiros/segundo limpos, encorpados e consistentes
+  playPlayerMachinegun() {
     if (!this.ctx) return;
     this.resume();
-    const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(750, t);
-    osc.frequency.exponentialRampToValueAtTime(140, t + 0.09);
-
-    gain.gain.setValueAtTime(0.35, t);
-    gain.gain.linearRampToValueAtTime(0.001, t + 0.09);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-
-    osc.start(t);
-    osc.stop(t + 0.1);
-  }
-
-  playShotgun() {
-    if (!this.ctx) return;
-    this.resume();
-    const t = this.ctx.currentTime;
-    // Ruído branco filtrado
-    const bufferSize = this.ctx.sampleRate * 0.15;
-    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = buffer;
-
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(1800, t);
-    filter.frequency.linearRampToValueAtTime(300, t + 0.15);
-
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.5, t);
-    gain.gain.linearRampToValueAtTime(0.001, t + 0.15);
-
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.sfxGain);
-
-    noise.start(t);
-  }
-
-  playCannon() {
-    if (!this.ctx) return;
-    this.resume();
-    const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(120, t);
-    osc.frequency.exponentialRampToValueAtTime(25, t + 0.25);
-
-    gain.gain.setValueAtTime(0.7, t);
-    gain.gain.linearRampToValueAtTime(0.001, t + 0.28);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-
-    osc.start(t);
-    osc.stop(t + 0.3);
-  }
-
-  playHit() {
-    if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
 
     osc.type = 'triangle';
-    osc.frequency.setValueAtTime(500, t);
-    osc.frequency.exponentialRampToValueAtTime(80, t + 0.05);
+    osc.frequency.setValueAtTime(260, t);
+    osc.frequency.exponentialRampToValueAtTime(75, t + 0.07);
 
-    gain.gain.setValueAtTime(0.3, t);
-    gain.gain.linearRampToValueAtTime(0.01, t + 0.05);
+    gain.gain.setValueAtTime(0.28, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + 0.07);
 
     osc.connect(gain);
     gain.connect(this.sfxGain);
 
     osc.start(t);
-    osc.stop(t + 0.06);
+    osc.stop(t + 0.08);
   }
 
-  playExplosion(isLarge = false) {
+  // Dispersora do Jogador: Tiro de espingarda triplo concentrado e potente
+  playPlayerShotgun() {
     if (!this.ctx) return;
     this.resume();
     const t = this.ctx.currentTime;
-    const dur = isLarge ? 0.8 : 0.45;
+    const dur = 0.16;
     const bufferSize = Math.floor(this.ctx.sampleRate * dur);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -887,12 +1123,12 @@ class SoundSystem {
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(isLarge ? 600 : 900, t);
-    filter.frequency.linearRampToValueAtTime(60, t + dur);
+    filter.frequency.setValueAtTime(1400, t);
+    filter.frequency.linearRampToValueAtTime(180, t + dur);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(isLarge ? 0.8 : 0.5, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    gain.gain.setValueAtTime(0.48, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + dur);
 
     noise.connect(filter);
     filter.connect(gain);
@@ -901,25 +1137,174 @@ class SoundSystem {
     noise.start(t);
   }
 
+  // Canhão Pesado do Jogador: Grave, estrondoso, com sub-bass e impacto visceral
+  playPlayerCannon() {
+    if (!this.ctx) return;
+    this.resume();
+    const t = this.ctx.currentTime;
+
+    // Sub-bass concussivo
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(95, t);
+    osc.frequency.exponentialRampToValueAtTime(22, t + 0.35);
+
+    gain.gain.setValueAtTime(0.75, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + 0.38);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.4);
+
+    // Ruído de explosão de cano
+    const bufferSize = Math.floor(this.ctx.sampleRate * 0.22);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(450, t);
+    filter.frequency.linearRampToValueAtTime(60, t + 0.22);
+    const noiseGain = this.ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.5, t);
+    noiseGain.gain.linearRampToValueAtTime(0.001, t + 0.22);
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(this.sfxGain);
+    noise.start(t);
+  }
+
+  /* --- Sons dos Inimigos (Totalmente distintos das armas do jogador) --- */
+
+  playEnemyMachinegun() {
+    if (!this.ctx) return;
+    this.resume();
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(420, t);
+    osc.frequency.exponentialRampToValueAtTime(140, t + 0.08);
+
+    gain.gain.setValueAtTime(0.18, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + 0.08);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.09);
+  }
+
+  playEnemyCannon() {
+    if (!this.ctx) return;
+    this.resume();
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(65, t);
+    osc.frequency.exponentialRampToValueAtTime(20, t + 0.25);
+
+    gain.gain.setValueAtTime(0.35, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + 0.26);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.28);
+  }
+
+  playEnemyShotgun() {
+    if (!this.ctx) return;
+    this.resume();
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.exponentialRampToValueAtTime(60, t + 0.12);
+
+    gain.gain.setValueAtTime(0.25, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + 0.13);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.14);
+  }
+
+  playHit() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(380, t);
+    osc.frequency.exponentialRampToValueAtTime(60, t + 0.06);
+
+    gain.gain.setValueAtTime(0.25, t);
+    gain.gain.linearRampToValueAtTime(0.01, t + 0.06);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.07);
+  }
+
+  playExplosion(isLarge = false) {
+    if (!this.ctx) return;
+    this.resume();
+    const t = this.ctx.currentTime;
+    const dur = isLarge ? 0.75 : 0.45;
+    const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(isLarge ? 550 : 800, t);
+    filter.frequency.linearRampToValueAtTime(50, t + dur);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(isLarge ? 0.75 : 0.45, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxGain);
+    noise.start(t);
+  }
+
   playPowerup() {
     if (!this.ctx) return;
     this.resume();
     const t = this.ctx.currentTime;
-    const notes = [440, 554, 659, 880]; // A, C#, E, A
+    const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6 arpeggio
     notes.forEach((freq, idx) => {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      const st = t + idx * 0.05;
+      const st = t + idx * 0.045;
 
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, st);
 
-      gain.gain.setValueAtTime(0.2, st);
+      gain.gain.setValueAtTime(0.22, st);
       gain.gain.linearRampToValueAtTime(0.001, st + 0.12);
 
       osc.connect(gain);
       gain.connect(this.sfxGain);
-
       osc.start(st);
       osc.stop(st + 0.14);
     });
@@ -939,28 +1324,25 @@ class SoundSystem {
     const gain = this.ctx.createGain();
 
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(800, t);
+    osc.frequency.setValueAtTime(650, t);
 
-    gain.gain.setValueAtTime(0.15, t);
-    gain.gain.linearRampToValueAtTime(0.001, t + 0.03);
+    gain.gain.setValueAtTime(0.12, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + 0.035);
 
     osc.connect(gain);
     gain.connect(this.sfxGain);
-
     osc.start(t);
     osc.stop(t + 0.04);
   }
 
-  // Música Procedural de Sintetizador Arcade Synthwave em Loop
   startMusic() {
     if (this.isPlayingMusic || !this.ctx) return;
     this.isPlayingMusic = true;
 
     let step = 0;
-    const bpm = 128;
-    const stepDuration = (60 / bpm) / 4; // Semicolcheias (16th notes)
+    const bpm = 126;
+    const stepDuration = (60 / bpm) / 4;
 
-    // Progressão de Baixo Bassline
     const bassNotes = [
       110, 110, 110, 110, 130.81, 130.81, 146.83, 146.83,
       98, 98, 98, 98, 123.47, 123.47, 110, 110
@@ -971,13 +1353,13 @@ class SoundSystem {
       const t = this.ctx.currentTime;
       const currentStep = step % 16;
 
-      // 1. Kick (Bumbo) nos passos 0, 4, 8, 12
+      // Kick no 0, 4, 8, 12
       if (currentStep % 4 === 0) {
         const kickOsc = this.ctx.createOscillator();
         const kickGain = this.ctx.createGain();
-        kickOsc.frequency.setValueAtTime(140, t);
+        kickOsc.frequency.setValueAtTime(130, t);
         kickOsc.frequency.exponentialRampToValueAtTime(32, t + 0.08);
-        kickGain.gain.setValueAtTime(0.4, t);
+        kickGain.gain.setValueAtTime(0.35, t);
         kickGain.gain.linearRampToValueAtTime(0.001, t + 0.09);
         kickOsc.connect(kickGain);
         kickGain.connect(this.musicGain);
@@ -985,13 +1367,13 @@ class SoundSystem {
         kickOsc.stop(t + 0.1);
       }
 
-      // 2. Snare nos passos 4 e 12
+      // Snare no 4 e 12
       if (currentStep === 4 || currentStep === 12) {
         const snareOsc = this.ctx.createOscillator();
         const snareGain = this.ctx.createGain();
         snareOsc.type = 'triangle';
-        snareOsc.frequency.setValueAtTime(180, t);
-        snareGain.gain.setValueAtTime(0.2, t);
+        snareOsc.frequency.setValueAtTime(170, t);
+        snareGain.gain.setValueAtTime(0.18, t);
         snareGain.gain.linearRampToValueAtTime(0.001, t + 0.08);
         snareOsc.connect(snareGain);
         snareGain.connect(this.musicGain);
@@ -999,16 +1381,14 @@ class SoundSystem {
         snareOsc.stop(t + 0.09);
       }
 
-      // 3. Linha de Baixo Pulsante (Bass Synth)
+      // Bassline sintetizado
       const freq = bassNotes[currentStep];
       const bassOsc = this.ctx.createOscillator();
       const bassGain = this.ctx.createGain();
       bassOsc.type = 'sawtooth';
       bassOsc.frequency.setValueAtTime(freq, t);
-
-      bassGain.gain.setValueAtTime(0.15, t);
+      bassGain.gain.setValueAtTime(0.12, t);
       bassGain.gain.exponentialRampToValueAtTime(0.01, t + stepDuration * 0.85);
-
       bassOsc.connect(bassGain);
       bassGain.connect(this.musicGain);
       bassOsc.start(t);
@@ -1023,67 +1403,65 @@ class SoundSystem {
 
   stopMusic() {
     this.isPlayingMusic = false;
-    if (this.musicTimer) clearTimeout(this.musicTimer);
+    if (this.musicTimer) {
+      clearTimeout(this.musicTimer);
+      this.musicTimer = null;
+    }
   }
 }
 
 
 /* ============================================================================
-   5. GERENCIADOR DE DETRITOS VOXEL E SISTEMA DE PARTÍCULAS
+   6. GERENCIADOR DE DETRITOS VOXEL E SISTEMA DE PARTÍCULAS
    ============================================================================ */
 
 class DebrisParticleSystem {
   constructor(renderer) {
     this.renderer = renderer;
-    this.debrisList = []; // Blocos voxel saltando
-    this.particleList = []; // Fogo, fumaça, faíscas
-    this.maxDebris = 400;
-    this.maxParticles = 500;
+    this.debrisList = [];
+    this.particleList = [];
+    this.weatherParticles = [];
+    this.maxDebris = 500;
+    this.maxParticles = 600;
   }
 
-  // Gera desmembramento completo do veículo em dezenas de blocos voxel
+  // Destruição Voxel Avançada com desmembramento de rodas, carroceria e armas
   spawnVehicleDestruction(vehicleX, vehicleY, vehicleZ, boxes, impulseMultiplier = 1.0) {
-    const count = Math.min(boxes.length, 50);
+    const count = Math.min(boxes.length, 60);
     for (let i = 0; i < count; i++) {
-      if (this.debrisList.length >= this.maxDebris) {
-        this.debrisList.shift();
-      }
+      if (this.debrisList.length >= this.maxDebris) this.debrisList.shift();
       const b = boxes[i];
-      // Posição no espaço de mundo
       const x = vehicleX + b.cx;
       const y = Math.max(0.4, vehicleY + b.cy);
       const z = vehicleZ + b.cz;
 
-      // Velocidade explosiva inicial
       const angle = Math.random() * Math.PI * 2;
-      const horizSpeed = (8 + Math.random() * 16) * impulseMultiplier;
+      const isWheel = b.type === 'wheel';
+      const horizSpeed = (isWheel ? (12 + Math.random() * 18) : (6 + Math.random() * 16)) * impulseMultiplier;
+
       this.debrisList.push({
         x: x, y: y, z: z,
-        sx: b.sx * (0.8 + Math.random() * 0.4),
-        sy: b.sy * (0.8 + Math.random() * 0.4),
-        sz: b.sz * (0.8 + Math.random() * 0.4),
+        sx: b.sx, sy: b.sy, sz: b.sz,
         vx: Math.cos(angle) * horizSpeed,
-        vy: (12 + Math.random() * 18) * impulseMultiplier,
+        vy: (isWheel ? 14 + Math.random() * 16 : 8 + Math.random() * 18) * impulseMultiplier,
         vz: Math.sin(angle) * horizSpeed + (Math.random() * 10 - 5),
-        rotX: Math.random() * 10 - 5,
-        rotY: Math.random() * 10 - 5,
-        rotZ: Math.random() * 10 - 5,
+        rotX: Math.random() * 12 - 6,
+        rotY: Math.random() * 12 - 6,
+        rotZ: Math.random() * 12 - 6,
         r: b.r, g: b.g, b: b.b,
         life: 3.5 + Math.random() * 1.5,
-        maxLife: 5.0
+        maxLife: 5.0,
+        isWheel: isWheel
       });
     }
 
-    // Adiciona partículas explosivas (Fogo e Fumaça)
     this.spawnExplosionPuffs(vehicleX, vehicleY + 0.8, vehicleZ, 25 * impulseMultiplier);
   }
 
   spawnExplosionPuffs(x, y, z, count) {
     for (let i = 0; i < count; i++) {
-      if (this.particleList.length >= this.maxParticles) {
-        this.particleList.shift();
-      }
-      const isFire = Math.random() > 0.4;
+      if (this.particleList.length >= this.maxParticles) this.particleList.shift();
+      const isFire = Math.random() > 0.35;
       const speed = 4 + Math.random() * 12;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.random() * Math.PI;
@@ -1091,12 +1469,12 @@ class DebrisParticleSystem {
       this.particleList.push({
         x: x, y: y, z: z,
         vx: Math.sin(phi) * Math.cos(theta) * speed,
-        vy: Math.cos(phi) * speed + 4,
+        vy: Math.cos(phi) * speed + 5,
         vz: Math.sin(phi) * Math.sin(theta) * speed,
-        size: 0.35 + Math.random() * 0.6,
-        r: isFire ? 1.0 : 0.4,
-        g: isFire ? 0.3 + Math.random() * 0.5 : 0.4,
-        b: isFire ? 0.05 : 0.4,
+        size: 0.35 + Math.random() * 0.65,
+        r: isFire ? 1.0 : 0.45,
+        g: isFire ? 0.3 + Math.random() * 0.5 : 0.45,
+        b: isFire ? 0.05 : 0.45,
         life: 0.6 + Math.random() * 0.8,
         maxLife: 1.4
       });
@@ -1113,16 +1491,52 @@ class DebrisParticleSystem {
         vz: (Math.random() - 0.5) * 14,
         size: 0.18,
         r: 1.0, g: 0.9, b: 0.2,
-        life: 0.2 + Math.random() * 0.3,
+        life: 0.25 + Math.random() * 0.25,
         maxLife: 0.5
       });
+    }
+  }
+
+  // Partículas Climáticas por Mapa (Neve, Pétalas Sakura)
+  updateWeather(dt, playerZ, weatherType) {
+    if (weatherType === 'none') {
+      this.weatherParticles = [];
+      return;
+    }
+
+    // Mantém ~120 partículas climáticas ao redor do jogador
+    while (this.weatherParticles.length < 120) {
+      const zOffset = (Math.random() - 0.2) * 180;
+      this.weatherParticles.push({
+        x: (Math.random() - 0.5) * 45,
+        y: 4 + Math.random() * 16,
+        z: playerZ + zOffset,
+        vx: weatherType === 'sakura' ? (Math.random() * 4 - 1) : (Math.random() * 2 - 1),
+        vy: weatherType === 'sakura' ? -(1.5 + Math.random() * 2) : -(4 + Math.random() * 4),
+        vz: weatherType === 'sakura' ? (Math.random() * 2) : (Math.random() * 2 - 1),
+        size: weatherType === 'sakura' ? 0.22 : 0.16,
+        type: weatherType
+      });
+    }
+
+    for (let i = this.weatherParticles.length - 1; i >= 0; i--) {
+      const p = this.weatherParticles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+
+      if (p.y <= 0.2 || p.z < playerZ - 30 || p.z > playerZ + 200) {
+        // Recicla à frente do jogador
+        p.x = (Math.random() - 0.5) * 45;
+        p.y = 12 + Math.random() * 8;
+        p.z = playerZ + 40 + Math.random() * 140;
+      }
     }
   }
 
   update(dt) {
     const gravity = 32.0;
 
-    // Atualiza Detritos Voxel
     for (let i = this.debrisList.length - 1; i >= 0; i--) {
       const d = this.debrisList[i];
       d.life -= dt;
@@ -1136,16 +1550,16 @@ class DebrisParticleSystem {
       d.y += d.vy * dt;
       d.z += d.vz * dt;
 
-      // Colisão com o solo (Asfalto da Estrada Y = 0)
-      if (d.y <= 0.2) {
-        d.y = 0.2;
-        d.vy = -d.vy * 0.38; // Coeficiente de restituição / quique
-        d.vx *= 0.82; // Atrito
-        d.vz *= 0.82;
+      // Colisão física com o asfalto
+      if (d.y <= 0.25) {
+        d.y = 0.25;
+        const restitution = d.isWheel ? 0.65 : 0.35;
+        d.vy = -d.vy * restitution;
+        d.vx *= 0.85;
+        d.vz *= 0.85;
       }
     }
 
-    // Atualiza Partículas
     for (let i = this.particleList.length - 1; i >= 0; i--) {
       const p = this.particleList[i];
       p.life -= dt;
@@ -1157,23 +1571,32 @@ class DebrisParticleSystem {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
-      p.size *= 0.98; // Diminui sutilmente com o tempo
+      p.size *= 0.985;
     }
   }
 
   render(renderer) {
     const verts = [];
 
-    // Empacota todos os cubos de detritos no buffer dinâmico
+    // Detritos Voxel
     for (const d of this.debrisList) {
       const alpha = Math.min(1.0, d.life / 0.8);
       VoxelBuilder.addBox(verts, d.x, d.y, d.z, d.sx, d.sy, d.sz, d.r, d.g, d.b, alpha);
     }
 
-    // Empacota partículas como pequenos cubos luminosos
+    // Partículas de Fogo / Fumaça / Faíscas
     for (const p of this.particleList) {
       const alpha = Math.min(1.0, p.life / 0.4);
       VoxelBuilder.addBox(verts, p.x, p.y, p.z, p.size, p.size, p.size, p.r, p.g, p.b, alpha);
+    }
+
+    // Partículas Climáticas
+    for (const wp of this.weatherParticles) {
+      if (wp.type === 'snow') {
+        VoxelBuilder.addBox(verts, wp.x, wp.y, wp.z, wp.size, wp.size, wp.size, 0.95, 0.98, 1.0, 0.85);
+      } else if (wp.type === 'sakura') {
+        VoxelBuilder.addBox(verts, wp.x, wp.y, wp.z, wp.size * 1.5, wp.size * 0.5, wp.size, 0.98, 0.65, 0.78, 0.85);
+      }
     }
 
     if (verts.length > 0) {
@@ -1184,34 +1607,85 @@ class DebrisParticleSystem {
 
 
 /* ============================================================================
-   6. ESTRADA 3D, CURVAS E BIOMAS PROGRESSIVOS
+   7. ESTRADA 3D INFINITA, CURVAS PROCEDURAIS E CENÁRIOS
    ============================================================================ */
 
 class RoadManager {
   constructor(renderer) {
     this.renderer = renderer;
-    this.roadWidth = 24.0; // 4 faixas amplas
+    this.roadWidth = 24.0;
     this.segmentLength = 10.0;
-    this.totalSegments = 70; // Segmentos renderizados à frente
+    this.currentMapKey = 'desert';
 
-    // Malha estática dos segmentos repetitivos da estrada
-    this.roadMesh = this.buildRoadSegmentMesh(renderer);
-    this.guardrailMesh = this.buildGuardrailMesh(renderer);
-    this.cityBuildingMesh = this.buildCityBuildingMesh(renderer);
-    this.desertPropMesh = this.buildDesertPropMesh(renderer);
-    this.industrialSiloMesh = this.buildIndustrialSiloMesh(renderer);
-    this.mountainMesh = this.buildMountainMesh(renderer);
-    this.nightPostMesh = this.buildNightPostMesh(renderer);
+    // Malhas do asfalto e defensas
+    this.roadMesh = null;
+    this.guardrailMesh = null;
+    this.terrainMesh = null;
 
-    this.currentBiome = 'city';
+    this.rebuildMeshes();
   }
 
-  // Curvatura suave 3D em X baseada na coordenada Z
+  setMap(mapKey) {
+    this.currentMapKey = mapKey;
+    const cfg = MAP_CONFIGS[mapKey] || MAP_CONFIGS.desert;
+    this.renderer.fogColor = cfg.fogColor;
+    this.renderer.ambientColor = cfg.ambientColor;
+    this.renderer.sunColor = cfg.sunColor;
+    this.renderer.lightDir = cfg.lightDir;
+    this.rebuildMeshes();
+  }
+
+  rebuildMeshes() {
+    const cfg = MAP_CONFIGS[this.currentMapKey] || MAP_CONFIGS.desert;
+    const len = this.segmentLength;
+    const hw = this.roadWidth / 2;
+
+    // Asfalto e Faixas
+    const rVerts = [];
+    const asp = cfg.roadAsphalt;
+    const shld = cfg.roadShoulder;
+
+    // Pista principal
+    VoxelBuilder.addBox(rVerts, 0, 0, len / 2, this.roadWidth, 0.2, len, asp[0], asp[1], asp[2]);
+    // Acostamento
+    VoxelBuilder.addBox(rVerts, -hw - 1.2, 0.05, len / 2, 2.4, 0.25, len, shld[0], shld[1], shld[2]);
+    VoxelBuilder.addBox(rVerts, hw + 1.2, 0.05, len / 2, 2.4, 0.25, len, shld[0], shld[1], shld[2]);
+    // Faixa central amarela
+    VoxelBuilder.addBox(rVerts, 0, 0.12, len / 2, 0.4, 0.05, len * 0.65, 0.95, 0.8, 0.1);
+    // Linhas brancas de faixa
+    VoxelBuilder.addBox(rVerts, -hw * 0.5, 0.12, len / 2, 0.25, 0.05, len, 0.85, 0.85, 0.9);
+    VoxelBuilder.addBox(rVerts, hw * 0.5, 0.12, len / 2, 0.25, 0.05, len, 0.85, 0.85, 0.9);
+    this.roadMesh = this.renderer.createMesh(rVerts);
+
+    // Defensas Laterais
+    const gVerts = [];
+    if (this.currentMapKey === 'japan_rural') {
+      // Cerca rural de madeira / bambu tradicional
+      VoxelBuilder.addBox(gVerts, 0, 0.5, len / 2, 0.2, 0.2, len, 0.45, 0.28, 0.18);
+      VoxelBuilder.addBox(gVerts, 0, 0.8, len / 2, 0.2, 0.2, len, 0.45, 0.28, 0.18);
+      VoxelBuilder.addBox(gVerts, 0, 0.5, len * 0.2, 0.3, 1.1, 0.3, 0.35, 0.20, 0.12);
+      VoxelBuilder.addBox(gVerts, 0, 0.5, len * 0.8, 0.3, 1.1, 0.3, 0.35, 0.20, 0.12);
+    } else {
+      // Guardrail metálico com faixas
+      VoxelBuilder.addBox(gVerts, 0, 0.6, len / 2, 0.3, 0.4, len, 0.75, 0.2, 0.25);
+      VoxelBuilder.addBox(gVerts, 0, 0.3, len * 0.2, 0.35, 0.6, 0.35, 0.45, 0.48, 0.52);
+      VoxelBuilder.addBox(gVerts, 0, 0.3, len * 0.8, 0.35, 0.6, 0.35, 0.45, 0.48, 0.52);
+    }
+    this.guardrailMesh = this.renderer.createMesh(gVerts);
+
+    // Terreno plano contínuo nas laterais da estrada
+    const tVerts = [];
+    const tc = cfg.terrainColor;
+    const terrainWidth = 90.0;
+    VoxelBuilder.addBox(tVerts, -(hw + terrainWidth * 0.5 + 2.0), -0.05, len / 2, terrainWidth, 0.1, len, tc[0], tc[1], tc[2]);
+    VoxelBuilder.addBox(tVerts, (hw + terrainWidth * 0.5 + 2.0), -0.05, len / 2, terrainWidth, 0.1, len, tc[0], tc[1], tc[2]);
+    this.terrainMesh = this.renderer.createMesh(tVerts);
+  }
+
   getCurveX(z) {
     return Math.sin(z * 0.0035) * 28.0 + Math.sin(z * 0.008) * 12.0;
   }
 
-  // Derivada dX/dZ para obter o ângulo tangente de rotação
   getTangentAngle(z) {
     const dz = 1.0;
     const x0 = this.getCurveX(z);
@@ -1219,125 +1693,31 @@ class RoadManager {
     return Math.atan2(x1 - x0, dz);
   }
 
-  buildRoadSegmentMesh(renderer) {
-    const verts = [];
-    const hw = this.roadWidth / 2;
-    const len = this.segmentLength;
-
-    // Asfalto escuro
-    VoxelBuilder.addBox(verts, 0, 0, len / 2, this.roadWidth, 0.2, len, 0.14, 0.16, 0.2);
-
-    // Acostamentos laterais
-    VoxelBuilder.addBox(verts, -hw - 1.0, 0.05, len / 2, 2.0, 0.25, len, 0.25, 0.28, 0.32);
-    VoxelBuilder.addBox(verts, hw + 1.0, 0.05, len / 2, 2.0, 0.25, len, 0.25, 0.28, 0.32);
-
-    // Listras amarelas centrais tracejadas
-    VoxelBuilder.addBox(verts, 0, 0.12, len / 2, 0.4, 0.05, len * 0.65, 0.95, 0.8, 0.1);
-
-    // Linhas brancas laterais de delimitação de faixa
-    VoxelBuilder.addBox(verts, -hw * 0.5, 0.12, len / 2, 0.25, 0.05, len, 0.85, 0.85, 0.9);
-    VoxelBuilder.addBox(verts, hw * 0.5, 0.12, len / 2, 0.25, 0.05, len, 0.85, 0.85, 0.9);
-
-    return renderer.createMesh(verts);
-  }
-
-  buildGuardrailMesh(renderer) {
-    const verts = [];
-    const len = this.segmentLength;
-    // Defensa metálica com postes
-    VoxelBuilder.addBox(verts, 0, 0.6, len / 2, 0.3, 0.4, len, 0.75, 0.2, 0.25); // Vermelho e branco
-    VoxelBuilder.addBox(verts, 0, 0.3, len * 0.2, 0.35, 0.6, 0.35, 0.4, 0.45, 0.5);
-    VoxelBuilder.addBox(verts, 0, 0.3, len * 0.8, 0.35, 0.6, 0.35, 0.4, 0.45, 0.5);
-    return renderer.createMesh(verts);
-  }
-
-  buildCityBuildingMesh(renderer) {
-    const verts = [];
-    // Edifícios futuristas em blocos
-    VoxelBuilder.addBox(verts, 0, 16.0, 0, 14.0, 32.0, 14.0, 0.1, 0.15, 0.26);
-    // Janelas iluminadas em ciano
-    VoxelBuilder.addBox(verts, -4.0, 18.0, 7.1, 2.0, 2.0, 0.2, 0.0, 0.9, 1.0);
-    VoxelBuilder.addBox(verts, 4.0, 24.0, 7.1, 2.0, 2.0, 0.2, 0.0, 0.9, 1.0);
-    VoxelBuilder.addBox(verts, 0, 12.0, 7.1, 2.0, 2.0, 0.2, 0.0, 0.9, 1.0);
-    return renderer.createMesh(verts);
-  }
-
-  buildDesertPropMesh(renderer) {
-    const verts = [];
-    // Rocha arenosa e cacto voxel
-    VoxelBuilder.addBox(verts, 0, 4.0, 0, 8.0, 8.0, 8.0, 0.78, 0.52, 0.32);
-    // Cacto
-    VoxelBuilder.addBox(verts, 6.0, 3.0, 0, 0.8, 6.0, 0.8, 0.15, 0.65, 0.25);
-    VoxelBuilder.addBox(verts, 7.0, 4.0, 0, 2.0, 0.8, 0.8, 0.15, 0.65, 0.25);
-    return renderer.createMesh(verts);
-  }
-
-  buildIndustrialSiloMesh(renderer) {
-    const verts = [];
-    // Tanques metálicos cilíndricos e chaminés industriais
-    VoxelBuilder.addBox(verts, 0, 10.0, 0, 9.0, 20.0, 9.0, 0.45, 0.48, 0.52);
-    VoxelBuilder.addBox(verts, 7.0, 18.0, 0, 2.4, 36.0, 2.4, 0.7, 0.2, 0.2); // Chaminé
-    return renderer.createMesh(verts);
-  }
-
-  buildMountainMesh(renderer) {
-    const verts = [];
-    // Grande pico rochoso com topo nevado
-    VoxelBuilder.addBox(verts, 0, 16.0, 0, 18.0, 32.0, 18.0, 0.3, 0.32, 0.36);
-    VoxelBuilder.addBox(verts, 0, 32.0, 0, 8.0, 8.0, 8.0, 0.92, 0.95, 0.98);
-    return renderer.createMesh(verts);
-  }
-
-  buildNightPostMesh(renderer) {
-    const verts = [];
-    // Poste e pórtico de sinalização luminosa neon
-    VoxelBuilder.addBox(verts, 0, 8.0, 0, 1.2, 16.0, 1.2, 0.22, 0.24, 0.28);
-    VoxelBuilder.addBox(verts, -5.0, 15.0, 0, 10.0, 1.2, 1.2, 0.22, 0.24, 0.28);
-    VoxelBuilder.addBox(verts, -8.0, 14.0, 0, 2.4, 0.8, 1.4, 0.0, 0.95, 1.0); // Luz ciano neon
-    VoxelBuilder.addBox(verts, -3.0, 14.0, 0, 2.4, 0.8, 1.4, 1.0, 0.05, 0.5); // Luz magenta neon
-    return renderer.createMesh(verts);
-  }
-
-  updateBiome(distanceMeters) {
-    // Alterna biomas conforme a distância avança
-    const cycle = Math.floor(distanceMeters / 1500) % 5;
-    if (cycle === 0) {
-      this.currentBiome = 'city';
-      this.renderer.fogColor = [0.08, 0.10, 0.18]; // Noturno azulado
-    } else if (cycle === 1) {
-      this.currentBiome = 'desert';
-      this.renderer.fogColor = [0.26, 0.18, 0.12]; // Ocre desértico
-    } else if (cycle === 2) {
-      this.currentBiome = 'industrial';
-      this.renderer.fogColor = [0.15, 0.15, 0.15]; // Cinza fabril
-    } else if (cycle === 3) {
-      this.currentBiome = 'mountain';
-      this.renderer.fogColor = [0.12, 0.16, 0.24]; // Azul gélido
-    } else {
-      this.currentBiome = 'night';
-      this.renderer.fogColor = [0.03, 0.04, 0.08]; // Cyberpunk escuro
-    }
-  }
-
-  render(renderer, playerZ) {
-    const startSegment = Math.floor(playerZ / this.segmentLength);
+  // Renderização da Estrada Infinita (Muito antes, embaixo e muito depois do jogador)
+  render(renderer, playerZ, models) {
+    const currentSegment = Math.floor(playerZ / this.segmentLength);
+    // 25 segmentos atrás (-250m) e 95 segmentos à frente (+950m) = 120 segmentos contínuos
+    const backSegments = 25;
+    const forwardSegments = 95;
     const hw = this.roadWidth / 2;
     const m = Math3D.createMat4();
 
-    for (let i = 0; i < this.totalSegments; i++) {
-      const segIndex = startSegment + i;
+    for (let i = -backSegments; i < forwardSegments; i++) {
+      const segIndex = currentSegment + i;
       const segZ = segIndex * this.segmentLength;
       const segX = this.getCurveX(segZ);
       const angle = this.getTangentAngle(segZ);
 
-      // Pista Central
       m.fill(0);
       m[0] = 1; m[5] = 1; m[10] = 1; m[15] = 1;
       Math3D.translateMat4(m, m, [segX, 0, segZ]);
       Math3D.rotateY(m, m, angle);
-      renderer.drawMesh(this.roadMesh, m);
 
-      // Defensas Laterais (Esquerda e Direita)
+      // Asfalto e Terreno Lateral
+      renderer.drawMesh(this.roadMesh, m);
+      renderer.drawMesh(this.terrainMesh, m);
+
+      // Defensas
       const mLeft = Math3D.createMat4();
       Math3D.translateMat4(mLeft, m, [-hw - 0.2, 0, 0]);
       renderer.drawMesh(this.guardrailMesh, mLeft);
@@ -1346,18 +1726,36 @@ class RoadManager {
       Math3D.translateMat4(mRight, m, [hw + 0.2, 0, 0]);
       renderer.drawMesh(this.guardrailMesh, mRight);
 
-      // Elementos de Cenário Lateral (a cada 4 segmentos)
+      // Elementos de Cenário Distribuídos nas Margens da Estrada
       if (segIndex % 4 === 0) {
         const side = (segIndex % 8 === 0) ? 1 : -1;
-        const propMesh = (this.currentBiome === 'desert') ? this.desertPropMesh :
-                         (this.currentBiome === 'industrial') ? this.industrialSiloMesh :
-                         (this.currentBiome === 'mountain') ? this.mountainMesh :
-                         (this.currentBiome === 'night') ? this.nightPostMesh :
-                         this.cityBuildingMesh;
+        let propMesh = null;
+        let propOffset = 26.0;
 
-        const mProp = Math3D.createMat4();
-        Math3D.translateMat4(mProp, m, [side * (hw + 24.0), 0, 0]);
-        renderer.drawMesh(propMesh, mProp);
+        if (this.currentMapKey === 'desert') {
+          propMesh = (segIndex % 12 === 0) ? models.desert_mesa.mesh : models.desert_cactus.mesh;
+          propOffset = (segIndex % 12 === 0) ? 36.0 : 18.0;
+        } else if (this.currentMapKey === 'snow') {
+          propMesh = (segIndex % 12 === 0) ? models.snow_mountain.mesh : models.snow_pine.mesh;
+          propOffset = (segIndex % 12 === 0) ? 38.0 : 20.0;
+        } else if (this.currentMapKey === 'japan_rural') {
+          if (segIndex % 16 === 0) {
+            propMesh = models.japan_torii.mesh;
+            propOffset = 0; // Torii sobre a pista!
+          } else if (segIndex % 8 === 0) {
+            propMesh = models.japan_minka.mesh;
+            propOffset = 28.0;
+          } else {
+            propMesh = models.japan_sakura.mesh;
+            propOffset = 18.0;
+          }
+        }
+
+        if (propMesh) {
+          const mProp = Math3D.createMat4();
+          Math3D.translateMat4(mProp, m, [side * propOffset, 0, 0]);
+          renderer.drawMesh(propMesh, mProp);
+        }
       }
     }
   }
@@ -1365,19 +1763,20 @@ class RoadManager {
 
 
 /* ============================================================================
-   7. SISTEMA DE ARMAS E PROJÉTEIS 3D
+   8. SISTEMA DE ARMAS, PROJÉTEIS 3D E LINHA DE MIRA
    ============================================================================ */
 
 class Projectile {
-  constructor(x, y, z, vx, vy, vz, damage, isPlayer, range, color, size = 0.35) {
+  constructor(x, y, z, vx, vy, vz, damage, isPlayer, range, color, size = 0.35, isCannon = false) {
     this.x = x; this.y = y; this.z = z;
     this.vx = vx; this.vy = vy; this.vz = vz;
     this.damage = damage;
     this.isPlayer = isPlayer;
     this.traveled = 0;
     this.range = range;
-    this.color = color; // [r, g, b]
+    this.color = color;
     this.size = size;
+    this.isCannon = isCannon;
     this.active = true;
   }
 
@@ -1400,38 +1799,7 @@ class WeaponSystem {
     this.game = game;
     this.projectiles = [];
     this.cooldown = 0;
-
-    // Configurações das 3 Armas Principais
-    this.configs = {
-      machinegun: {
-        name: 'Metralhadora',
-        fireRate: 6.0, // 6 tiros / s
-        damage: 25,
-        range: 160.0,
-        speed: 130.0,
-        color: [1.0, 0.9, 0.1], // Amarelo
-        size: 0.28
-      },
-      shotgun: {
-        name: 'Dispersora',
-        fireRate: 2.0, // 2 disparos / s
-        damage: 12,
-        pellets: 5,
-        range: 65.0,
-        speed: 100.0,
-        color: [0.0, 0.95, 1.0], // Ciano neon
-        size: 0.22
-      },
-      cannon: {
-        name: 'Canhão Pesado',
-        fireRate: 1.0, // 1 tiro / s
-        damage: 100,
-        range: 220.0,
-        speed: 120.0,
-        color: [1.0, 0.25, 0.05], // Plasma avermelhado
-        size: 0.65
-      }
-    };
+    this.mgSideAlternator = false; // Alternador determinístico (sem random) para Metralhadora
   }
 
   update(dt) {
@@ -1446,17 +1814,19 @@ class WeaponSystem {
     }
   }
 
-  firePlayer(weaponKey, playerX, playerY, playerZ, roadAngle, hasDoubleDamage, hasRapidFire) {
-    let cfg = this.configs[weaponKey] || this.configs.machinegun;
-    const fireInterval = 1.0 / (cfg.fireRate * (hasRapidFire ? 1.8 : 1.0));
+  // Disparo do jogador respeitando Segurar ESPAÇO, Cadência, Q/E e Danos
+  firePlayer(weaponKey, playerX, playerY, playerZ, roadAngle, hasDoubleDamage, hasRapidFire, keyQ, keyE) {
+    const cfg = PLAYER_WEAPONS[weaponKey] || PLAYER_WEAPONS.machinegun;
+    const fireInterval = 1.0 / (cfg.fireRate * (hasRapidFire ? 1.75 : 1.0));
     if (this.cooldown > 0) return false;
 
     this.cooldown = fireInterval;
     const dmg = cfg.damage * (hasDoubleDamage ? 2.0 : 1.0);
 
     if (weaponKey === 'shotgun') {
-      this.game.sound.playShotgun();
-      const spreadAngles = [-0.14, -0.07, 0.0, 0.07, 0.14];
+      // Dispersora: EXATAMENTE 3 balas por disparo em leque concentrado
+      this.game.sound.playPlayerShotgun();
+      const spreadAngles = [-0.045, 0.0, 0.045]; // Ângulos precisos e próximos
       for (const sp of spreadAngles) {
         const totalAngle = roadAngle + sp;
         this.projectiles.push(new Projectile(
@@ -1464,60 +1834,165 @@ class WeaponSystem {
           Math.sin(totalAngle) * cfg.speed,
           0,
           Math.cos(totalAngle) * cfg.speed,
-          dmg, true, cfg.range, cfg.color, cfg.size
+          dmg, true, cfg.range, cfg.color, cfg.size, false
         ));
       }
+      this.game.debris.spawnHitSparks(playerX, playerY + 0.6, playerZ + 2.0, 10);
+
     } else if (weaponKey === 'cannon') {
-      this.game.sound.playCannon();
-      this.game.camera.addShake(0.35); // Trepidação de disparo pesado
-      this.game.player.recoilZ = -0.55; // Recuo visual no veículo
-      this.game.debris.spawnHitSparks(playerX, playerY + 0.8, playerZ + 2.0, 8); // Clarão/faíscas de disparo
+      // Canhão Pesado: 150 dano, alto impacto, concussão visual e sonora
+      this.game.sound.playPlayerCannon();
+      this.game.camera.addShake(0.4);
+      this.game.player.recoilZ = -0.65;
+      this.game.debris.spawnHitSparks(playerX, playerY + 0.8, playerZ + 2.2, 14);
+
       this.projectiles.push(new Projectile(
-        playerX, playerY + 0.8, playerZ + 1.6,
+        playerX, playerY + 0.8, playerZ + 1.8,
         Math.sin(roadAngle) * cfg.speed,
         0,
         Math.cos(roadAngle) * cfg.speed,
-        dmg, true, cfg.range, cfg.color, cfg.size
+        dmg, true, cfg.range, cfg.color, cfg.size, true
       ));
+
     } else {
-      // Metralhadora
-      this.game.sound.playLaser();
-      // Disparo alternado nas asas esquerda/direita
-      const wingOffset = (Math.random() > 0.5 ? 1 : -1) * 1.4;
-      this.projectiles.push(new Projectile(
-        playerX + Math.cos(roadAngle) * wingOffset,
-        playerY + 0.5,
-        playerZ + 1.2,
-        Math.sin(roadAngle) * cfg.speed,
-        0,
-        Math.cos(roadAngle) * cfg.speed,
-        dmg, true, cfg.range, cfg.color, cfg.size
-      ));
+      // Metralhadora: 8 tiros/s, 20 dano
+      // Controle de canos: Q = exclusivo esquerdo, E = exclusivo direito, Q+E = simultâneo
+      this.game.sound.playPlayerMachinegun();
+
+      let fireLeft = false;
+      let fireRight = false;
+
+      if (keyQ && keyE) {
+        fireLeft = true;
+        fireRight = true;
+      } else if (keyQ) {
+        fireLeft = true;
+      } else if (keyE) {
+        fireRight = true;
+      } else {
+        // Sem tecla: alternância determinística estrita (nunca aleatório)
+        this.mgSideAlternator = !this.mgSideAlternator;
+        if (this.mgSideAlternator) fireLeft = true;
+        else fireRight = true;
+      }
+
+      // No sistema de coordenadas, offset lateral positivo é o lado esquerdo na visão do jogador
+      if (fireLeft) {
+        const leftOffset = 1.4;
+        const lx = playerX + Math.cos(roadAngle) * leftOffset;
+        const lz = playerZ - Math.sin(roadAngle) * leftOffset + 1.2;
+        this.projectiles.push(new Projectile(
+          lx, playerY + 0.5, lz,
+          Math.sin(roadAngle) * cfg.speed,
+          0,
+          Math.cos(roadAngle) * cfg.speed,
+          dmg, true, cfg.range, cfg.color, cfg.size, false
+        ));
+        this.game.debris.spawnHitSparks(lx, playerY + 0.5, lz + 0.5, 3);
+      }
+
+      if (fireRight) {
+        const rightOffset = -1.4;
+        const rx = playerX + Math.cos(roadAngle) * rightOffset;
+        const rz = playerZ - Math.sin(roadAngle) * rightOffset + 1.2;
+        this.projectiles.push(new Projectile(
+          rx, playerY + 0.5, rz,
+          Math.sin(roadAngle) * cfg.speed,
+          0,
+          Math.cos(roadAngle) * cfg.speed,
+          dmg, true, cfg.range, cfg.color, cfg.size, false
+        ));
+        this.game.debris.spawnHitSparks(rx, playerY + 0.5, rz + 0.5, 3);
+      }
     }
 
     return true;
   }
 
-  fireEnemy(enemyX, enemyY, enemyZ, targetX, targetZ, speed = 80.0, damage = 35) {
+  // Disparo dos Inimigos com armamento específico e som próprio
+  fireEnemy(enemyX, enemyY, enemyZ, targetX, targetZ, weaponType = 'machinegun') {
     const dx = targetX - enemyX;
     const dz = targetZ - enemyZ;
     const len = Math.hypot(dx, dz) || 1;
-    this.projectiles.push(new Projectile(
-      enemyX, enemyY + 0.6, enemyZ - 1.2,
-      (dx / len) * speed,
-      0,
-      (dz / len) * speed,
-      damage, false, 150.0, [1.0, 0.1, 0.3], 0.35
-    ));
-    this.game.sound.playLaser();
+
+    if (weaponType === 'cannon') {
+      this.game.sound.playEnemyCannon();
+      this.projectiles.push(new Projectile(
+        enemyX, enemyY + 1.0, enemyZ - 1.5,
+        (dx / len) * 75.0, 0, (dz / len) * 75.0,
+        50, false, 160.0, [1.0, 0.4, 0.1], 0.6, true
+      ));
+    } else if (weaponType === 'shotgun') {
+      this.game.sound.playEnemyShotgun();
+      const baseAngle = Math.atan2(dx, dz);
+      for (const sp of [-0.06, 0.0, 0.06]) {
+        const ang = baseAngle + sp;
+        this.projectiles.push(new Projectile(
+          enemyX, enemyY + 0.8, enemyZ - 1.5,
+          Math.sin(ang) * 80.0, 0, Math.cos(ang) * 80.0,
+          25, false, 110.0, [1.0, 0.6, 0.1], 0.32, false
+        ));
+      }
+    } else {
+      // Metralhadora Inimiga
+      this.game.sound.playEnemyMachinegun();
+      this.projectiles.push(new Projectile(
+        enemyX, enemyY + 0.6, enemyZ - 1.2,
+        (dx / len) * 85.0, 0, (dz / len) * 85.0,
+        20, false, 150.0, [1.0, 0.2, 0.2], 0.35, false
+      ));
+    }
   }
 
-  render(renderer) {
+  // Renderização 3D dos Projéteis e da Linha de Mira WebGL
+  render(renderer, player, road) {
     const verts = [];
+
+    // 1. Projéteis com geometria 3D facetada arredondada e normais de iluminação
     for (const p of this.projectiles) {
-      // Voxel 3D esticado representando o feixe do projétil
-      VoxelBuilder.addBox(verts, p.x, p.y, p.z, p.size, p.size, p.size * 2.5, p.color[0], p.color[1], p.color[2]);
+      if (p.isCannon) {
+        // Grande projétil de canhão facetado 3D
+        VoxelBuilder.addFacetedSphere(verts, p.x, p.y, p.z, p.size, p.size * 1.8, p.color[0], p.color[1], p.color[2]);
+      } else {
+        // Projétil / feixe cilíndrico arredondado 3D
+        VoxelBuilder.addFacetedSphere(verts, p.x, p.y, p.z, p.size, p.size * 2.2, p.color[0], p.color[1], p.color[2]);
+      }
     }
+
+    // 2. Linha de Mira / Retículo 3D Visível em Tempo Real
+    if (player && !player.destroyed && this.game.state === 'PLAYING') {
+      const roadAngle = road.getTangentAngle(player.worldZ);
+      const dirX = Math.sin(roadAngle);
+      const dirZ = Math.cos(roadAngle);
+
+      // Feixe laser de mira projetado 70 metros à frente a partir do veículo
+      const beamSegments = 14;
+      const beamLen = 70.0;
+      const originX = player.worldX;
+      const originY = player.worldY + 0.55;
+      const originZ = player.worldZ + 1.8;
+
+      for (let s = 0; s < beamSegments; s++) {
+        const t0 = (s / beamSegments) * beamLen;
+        const t1 = ((s + 0.65) / beamSegments) * beamLen; // Traços espaçados
+        const bx = originX + dirX * ((t0 + t1) * 0.5);
+        const bz = originZ + dirZ * ((t0 + t1) * 0.5);
+        const bLen = t1 - t0;
+        const alpha = 0.55 * (1.0 - (s / beamSegments) * 0.7);
+
+        // Guia tridimensional no WebGL
+        VoxelBuilder.addBox(verts, bx, originY, bz, 0.08, 0.08, bLen, 0.0, 0.95, 1.0, alpha);
+      }
+
+      // Retículo de mira 3D no plano focal à frente (35m)
+      const reticleDist = 38.0;
+      const rx = originX + dirX * reticleDist;
+      const rz = originZ + dirZ * reticleDist;
+      const ry = originY;
+      VoxelBuilder.addBox(verts, rx, ry, rz, 1.2, 0.08, 0.08, 0.0, 0.95, 1.0, 0.85);
+      VoxelBuilder.addBox(verts, rx, ry, rz, 0.08, 1.2, 0.08, 0.0, 0.95, 1.0, 0.85);
+    }
+
     if (verts.length > 0) {
       renderer.drawDynamicBatch(new Float32Array(verts), verts.length / 10);
     }
@@ -1526,7 +2001,7 @@ class WeaponSystem {
 
 
 /* ============================================================================
-   8. VEÍCULO DO JOGADOR
+   9. VEÍCULO DO JOGADOR
    ============================================================================ */
 
 class PlayerVehicle {
@@ -1534,17 +2009,21 @@ class PlayerVehicle {
     this.game = game;
     this.type = vehicleType;
 
-    // Posições no espaço de mundo 3D
     this.laneX = 0; // Posição lateral relativa ao centro da pista (-10.0 a +10.0)
     this.worldX = 0;
     this.worldY = 0.5;
     this.worldZ = 0;
-    this.forwardSpeed = 50.0; // Velocidade de avanço automático contínuo
+
+    // Sistema de Velocidade Obrigatório (W/S): sempre positivo, nunca parado, nunca ré
+    this.forwardSpeed = 55.0;
+    this.minSpeed = 32.0; // Velocidade mínima positiva
+    this.maxSpeed = 88.0; // Velocidade máxima
+    this.accelRate = 35.0;
+    this.decelRate = 42.0;
 
     this.maxHp = 1000;
     this.hp = 1000;
 
-    // Configurações específicas por veículo
     this.stats = {
       interceptor: {
         lateralSpeed: 28.0,
@@ -1553,33 +2032,34 @@ class PlayerVehicle {
       },
       raptor: {
         lateralSpeed: 38.0,
-        collisionFactor: 1.35, // Recebe mais dano em batidas
+        collisionFactor: 1.2,
         width: 1.8, height: 1.0, depth: 3.4
       },
       titan: {
-        lateralSpeed: 20.0,
-        collisionFactor: 0.65, // Blindado resistente a impactos
+        lateralSpeed: 22.0,
+        collisionFactor: 0.6,
         width: 3.0, height: 1.6, depth: 4.0
       }
     }[vehicleType] || { lateralSpeed: 28.0, collisionFactor: 1.0, width: 2.2, height: 1.2, depth: 3.6 };
 
-    // Estados e Power-Ups
     this.hitFlash = 0;
-    this.shieldTimer = 0;
+    this.shieldTimer = 0; // Duração de ~3s com invulnerabilidade total
     this.rapidFireTimer = 0;
     this.doubleDamageTimer = 0;
 
-    this.tiltRoll = 0; // Inclinação lateral nas curvas/desvios
-    this.recoilZ = 0; // Recuo visual ao atirar armas pesadas
+    this.tiltRoll = 0;
+    this.recoilZ = 0;
     this.destroyed = false;
   }
 
   takeDamage(amount, isCollision = false) {
     if (this.destroyed) return;
 
+    // Escudo: Invulnerabilidade Total (Dano recebido = 0)
     if (this.shieldTimer > 0) {
-      amount *= 0.15; // Escudo absorve 85% do dano
       this.game.sound.playHit();
+      this.game.debris.spawnHitSparks(this.worldX, this.worldY + 0.5, this.worldZ, 12);
+      return;
     }
 
     if (isCollision) {
@@ -1590,7 +2070,6 @@ class PlayerVehicle {
     this.hitFlash = 0.15;
     this.game.camera.addShake(isCollision ? 0.45 : 0.2);
 
-    // Se o dano for considerável, solta pequenos blocos voxel (efeito de perda de partes)
     if (amount >= 50) {
       const modelObj = this.game.models[this.type];
       if (modelObj && modelObj.boxes.length > 0) {
@@ -1605,12 +2084,11 @@ class PlayerVehicle {
           vz: (Math.random() - 0.5) * 12,
           rotX: Math.random() * 8, rotY: Math.random() * 8, rotZ: Math.random() * 8,
           r: randomBox.r, g: randomBox.g, b: randomBox.b,
-          life: 3.0, maxLife: 3.0
+          life: 3.0, maxLife: 3.0, isWheel: false
         });
       }
     }
 
-    // Efeito de flash vermelho na interface
     const flashEl = document.getElementById('damage-flash');
     if (flashEl) {
       flashEl.classList.add('active');
@@ -1626,37 +2104,50 @@ class PlayerVehicle {
   update(dt, input) {
     if (this.destroyed) return;
 
-    // Atualiza timers de Power-Ups e recuo
     if (this.hitFlash > 0) this.hitFlash -= dt;
     if (this.shieldTimer > 0) this.shieldTimer -= dt;
     if (this.rapidFireTimer > 0) this.rapidFireTimer -= dt;
     if (this.doubleDamageTimer > 0) this.doubleDamageTimer -= dt;
     if (this.recoilZ < 0) this.recoilZ = Math.min(0, this.recoilZ + dt * 4.0);
 
-    // Movimentação Lateral Suave (A / D ou Setas)
+    // 1. Controle de Aceleração e Desaceleração (W/S ou Setas Cima/Baixo)
+    if (input.up) {
+      this.forwardSpeed = Math.min(this.maxSpeed, this.forwardSpeed + this.accelRate * dt);
+    } else if (input.down) {
+      this.forwardSpeed = Math.max(this.minSpeed, this.forwardSpeed - this.decelRate * dt);
+    } else {
+      // Retorno suave à velocidade de cruzeiro
+      const cruiseSpeed = 55.0;
+      if (this.forwardSpeed > cruiseSpeed) {
+        this.forwardSpeed = Math.max(cruiseSpeed, this.forwardSpeed - dt * 10.0);
+      } else if (this.forwardSpeed < cruiseSpeed) {
+        this.forwardSpeed = Math.min(cruiseSpeed, this.forwardSpeed + dt * 10.0);
+      }
+    }
+
+    // 2. CORREÇÃO DEFINITIVA DOS CONTROLES DE DIREÇÃO:
+    // Na nossa câmera, o lado esquerdo visual corresponde ao +X no mundo,
+    // e o lado direito visual corresponde ao -X no mundo.
     let moveDir = 0;
-    if (input.left) moveDir -= 1;
-    if (input.right) moveDir += 1;
+    if (input.left) moveDir += 1;  // A / ← move para a Esquerda da tela (+X no mundo)
+    if (input.right) moveDir -= 1; // D / → move para a Direita da tela (-X no mundo)
 
     const sens = this.game.settings.sensitivity / 100.0;
     this.laneX += moveDir * this.stats.lateralSpeed * sens * dt;
 
-    // Restrição física das bordas da pista
     const maxBound = (this.game.road.roadWidth / 2) - 1.5;
     this.laneX = Math.max(-maxBound, Math.min(maxBound, this.laneX));
 
-    // Inclinação visual (Roll / Banking) ao desviar
-    const targetRoll = -moveDir * 0.22;
+    // Inclinação visual (Roll/Banking): virar para a esquerda inclina à esquerda, virar à direita inclina à direita
+    const targetRoll = moveDir * 0.22;
     this.tiltRoll += (targetRoll - this.tiltRoll) * 12.0 * dt;
 
-    // Avanço Contínuo em Z
+    // Avanço contínuo em Z
     this.worldZ += this.forwardSpeed * dt;
 
-    // Posição no mundo acompanhando as curvas da pista
+    // Acompanha curvas da estrada
     const curveCenter = this.game.road.getCurveX(this.worldZ);
     this.worldX = curveCenter + this.laneX;
-
-    // Levitação suave do Hovercraft
     this.worldY = 0.5 + Math.sin(this.worldZ * 0.08) * 0.08;
   }
 
@@ -1671,11 +2162,11 @@ class PlayerVehicle {
 
     const modelObj = this.game.models[this.type];
     const tint = (this.hitFlash > 0) ? [1.0, 0.2, 0.2, 0.6] :
-                 (this.shieldTimer > 0) ? [0.2, 0.8, 1.0, 0.35] : null;
+                 (this.shieldTimer > 0) ? [0.2, 0.85, 1.0, 0.4] : null;
 
     renderer.drawMesh(modelObj.mesh, m, tint);
 
-    // Redoma de Escudo Voxel Ativa ao redor do veículo
+    // Redoma de escudo protetor ativa
     if (this.shieldTimer > 0 && this.game.models.shield_bubble) {
       const shieldMat = Math3D.createMat4();
       Math3D.translateMat4(shieldMat, shieldMat, [this.worldX, this.worldY + 0.2, this.worldZ]);
@@ -1687,50 +2178,27 @@ class PlayerVehicle {
 
 
 /* ============================================================================
-   9. GERENCIADOR DE INIMIGOS E INTELIGÊNCIA ARTIFICIAL
+   10. GERENCIADOR DE INIMIGOS, INTELIGÊNCIA ARTIFICIAL E ZONA DE COMBATE
    ============================================================================ */
 
 class EnemyVehicle {
   constructor(game, type, z, targetLaneX) {
     this.game = game;
     this.type = type;
+    this.config = ENEMY_TYPES[type] || ENEMY_TYPES.raptor;
+
     this.worldZ = z;
     this.laneX = targetLaneX;
     this.worldX = 0;
     this.worldY = 0.5;
 
-    // Configurações e Comportamento por Tipo
-    const baseStats = {
-      scout: {
-        hp: 100, score: 100, speedRel: 0.9, width: 2.0, height: 1.1, depth: 3.0,
-        fireInterval: 1.8, isTruck: false, aiType: 'evasive'
-      },
-      cruiser: {
-        hp: 175, score: 200, speedRel: 0.85, width: 2.2, height: 1.2, depth: 3.4,
-        fireInterval: 1.3, isTruck: false, aiType: 'align'
-      },
-      enforcer: {
-        hp: 250, score: 350, speedRel: 0.82, width: 2.4, height: 1.3, depth: 3.6,
-        fireInterval: 1.5, isTruck: false, aiType: 'ram'
-      },
-      hauler: {
-        hp: 450, score: 600, speedRel: 0.65, width: 3.2, height: 2.4, depth: 5.6,
-        fireInterval: 1.1, isTruck: true, aiType: 'steady'
-      },
-      behemoth: {
-        hp: 700, score: 1000, speedRel: 0.6, width: 3.6, height: 2.8, depth: 7.0,
-        fireInterval: 0.8, isTruck: true, aiType: 'heavy_assault'
-      }
-    }[type] || { hp: 100, score: 100, speedRel: 0.8, width: 2.0, height: 1.1, depth: 3.0, fireInterval: 1.5, isTruck: false, aiType: 'steady' };
-
-    // Escala de vida moderada por onda
-    const waveMult = 1.0 + (game.wave - 1) * 0.12;
-    this.maxHp = Math.round(baseStats.hp * waveMult);
+    // Vida exata e escala suave por onda
+    const waveMult = 1.0 + (game.wave - 1) * 0.08;
+    this.maxHp = Math.round(this.config.baseHp * waveMult);
     this.hp = this.maxHp;
-    this.score = Math.round(baseStats.score * (1 + (game.wave - 1) * 0.1));
-    this.speed = game.player.forwardSpeed * baseStats.speedRel;
-    this.stats = baseStats;
+    this.score = Math.round(this.config.score * (1 + (game.wave - 1) * 0.1));
 
+    this.speed = game.player.forwardSpeed * this.config.speedRel;
     this.fireTimer = Math.random() * 1.5;
     this.laneChangeTimer = 2.0 + Math.random() * 3.0;
     this.targetLaneX = targetLaneX;
@@ -1742,6 +2210,13 @@ class EnemyVehicle {
     this.hp -= amount;
     this.hitTimer = 0.12;
     this.game.sound.playHit();
+
+    // Floating Damage Number (-20, -50, -150)
+    this.game.floatingTexts.spawn(
+      this.worldX, this.worldY + this.config.height + 0.5, this.worldZ,
+      `-${Math.round(amount)}`, 'damage'
+    );
+
     if (this.hp <= 0 && !this.destroyed) {
       this.destroyed = true;
       this.onKilled();
@@ -1749,17 +2224,18 @@ class EnemyVehicle {
   }
 
   onKilled() {
-    this.game.addScore(this.score);
-    this.game.addKill();
+    this.game.addKill(this.score, this.worldX, this.worldY, this.worldZ);
 
-    const modelObj = this.game.models[this.type];
-    const impulse = this.stats.isTruck ? 1.4 : 1.0;
-    this.game.debris.spawnVehicleDestruction(this.worldX, this.worldY, this.worldZ, modelObj.boxes, impulse);
-    this.game.sound.playExplosion(this.stats.isTruck);
-    this.game.camera.addShake(this.stats.isTruck ? 0.5 : 0.25);
+    const modelObj = this.game.models[this.config.modelKey] || this.game.models[this.type];
+    const impulse = this.config.isTruck ? 1.4 : 1.0;
+    if (modelObj) {
+      this.game.debris.spawnVehicleDestruction(this.worldX, this.worldY, this.worldZ, modelObj.boxes, impulse);
+    }
+    this.game.sound.playExplosion(this.config.isTruck);
+    this.game.camera.addShake(this.config.isTruck ? 0.5 : 0.25);
 
-    // Chance de soltar Power-Up (28% de chance)
-    if (Math.random() < 0.28) {
+    // Chance de soltar Power-Up (32% de chance)
+    if (Math.random() < 0.32) {
       this.game.powerups.spawn(this.worldX, this.worldZ);
     }
   }
@@ -1768,41 +2244,50 @@ class EnemyVehicle {
     if (this.destroyed) return;
     if (this.hitTimer > 0) this.hitTimer -= dt;
 
-    // Avanço contínuo
+    // Regra da Zona de Combate: Inimigos NUNCA devem ficar muito longe atrás do jogador.
+    // Se um inimigo ficar para trás, ele acelera naturalmente para retornar à zona de combate.
+    const distZ = this.worldZ - player.worldZ;
+    if (distZ < -4.0) {
+      // Atrás do jogador: acelera com impulso natural para retornar
+      this.speed = player.forwardSpeed * 1.35 + 14.0;
+    } else if (distZ > 90.0) {
+      // Muito à frente: desacelera um pouco
+      this.speed = player.forwardSpeed * 0.7;
+    } else {
+      // Na zona de combate ideal: velocidade correspondente ao seu perfil
+      this.speed = player.forwardSpeed * this.config.speedRel;
+    }
+
     this.worldZ += this.speed * dt;
     const curveCenter = this.game.road.getCurveX(this.worldZ);
 
-    // Lógica da Inteligência Artificial
+    // Comportamento de Faixas da IA
     this.laneChangeTimer -= dt;
     if (this.laneChangeTimer <= 0) {
       this.laneChangeTimer = 2.5 + Math.random() * 4.0;
-      if (this.stats.aiType === 'align') {
-        // Tenta se alinhar na mesma faixa do jogador para atirar
-        this.targetLaneX = player.laneX + (Math.random() - 0.5) * 2.0;
-      } else if (this.stats.aiType === 'ram') {
-        // Enforcer persegue o jogador para colidir
-        this.targetLaneX = player.laneX;
-      } else if (this.stats.aiType === 'evasive') {
-        // Desvia ocasionalmente
+      if (this.config.aiType === 'align') {
+        this.targetLaneX = player.laneX + (Math.random() - 0.5) * 2.5;
+      } else if (this.config.aiType === 'evasive') {
         this.targetLaneX = (Math.random() - 0.5) * 16.0;
       } else {
-        // Caminhões trocam de faixa lentamente
         this.targetLaneX = [-6.0, -2.0, 2.0, 6.0][Math.floor(Math.random() * 4)];
       }
     }
 
-    // Suavização da transição lateral de faixas
-    const laneSpeed = this.stats.isTruck ? 6.0 : 12.0;
+    const laneSpeed = this.config.isTruck ? 6.0 : 12.0;
     this.laneX += (this.targetLaneX - this.laneX) * Math.min(1.0, dt * laneSpeed);
     this.worldX = curveCenter + this.laneX;
 
-    // Sistema de Tiro do Inimigo (quando à frente do jogador)
-    const distToPlayer = this.worldZ - player.worldZ;
-    if (distToPlayer > 10.0 && distToPlayer < 90.0) {
+    // Sistema de Tiro: específico por tipo de veículo
+    if (distZ > 8.0 && distZ < 85.0) {
       this.fireTimer -= dt;
       if (this.fireTimer <= 0) {
-        this.fireTimer = this.stats.fireInterval + Math.random() * 0.5;
-        this.game.weapons.fireEnemy(this.worldX, this.worldY, this.worldZ, player.worldX, player.worldZ);
+        this.fireTimer = this.config.fireInterval + Math.random() * 0.4;
+        this.game.weapons.fireEnemy(
+          this.worldX, this.worldY, this.worldZ,
+          player.worldX, player.worldZ,
+          this.config.weapon
+        );
       }
     }
   }
@@ -1814,9 +2299,11 @@ class EnemyVehicle {
     Math3D.translateMat4(m, m, [this.worldX, this.worldY, this.worldZ]);
     Math3D.rotateY(m, m, angle);
 
-    const modelObj = this.game.models[this.type];
+    const modelObj = this.game.models[this.config.modelKey] || this.game.models[this.type];
     const tint = (this.hitTimer > 0) ? [1.0, 1.0, 1.0, 0.7] : null;
-    renderer.drawMesh(modelObj.mesh, m, tint);
+    if (modelObj) {
+      renderer.drawMesh(modelObj.mesh, m, tint);
+    }
   }
 }
 
@@ -1838,25 +2325,24 @@ class EnemyManager {
       const e = this.enemies[i];
       e.update(dt, player);
 
-      // Remove inimigos mortos ou que ficaram muito para trás/muito distantes
-      if (e.destroyed || (player.worldZ - e.worldZ > 40.0) || (e.worldZ - player.worldZ > 300.0)) {
+      // Remove apenas se destruído ou se ultrapassou o limite muito além à frente
+      if (e.destroyed || (e.worldZ - player.worldZ > 320.0)) {
         this.enemies.splice(i, 1);
       }
     }
   }
 
   spawnNextWaveEnemy(playerZ) {
-    // Probabilidade de caminhões aumenta conforme as ondas avançam
     const truckChance = Math.min(0.55, 0.15 + (this.game.wave - 1) * 0.08);
     let type = 'scout';
 
-    if (this.game.wave >= 4 && Math.random() < truckChance) {
-      type = (this.game.wave >= 6 && Math.random() > 0.5) ? 'behemoth' : 'hauler';
+    if (this.game.wave >= 3 && Math.random() < truckChance) {
+      type = (Math.random() > 0.4) ? 'titan' : 'hauler';
     } else {
       const roll = Math.random();
-      if (roll < 0.45) type = 'scout';
-      else if (roll < 0.8) type = 'cruiser';
-      else type = 'enforcer';
+      if (roll < 0.5) type = 'raptor';
+      else if (roll < 0.8) type = 'scout';
+      else type = 'titan';
     }
 
     const spawnZ = playerZ + 120.0 + Math.random() * 40.0;
@@ -1873,7 +2359,7 @@ class EnemyManager {
 
 
 /* ============================================================================
-   10. GERENCIADOR DE OBSTÁCULOS E POWER-UPS
+   11. GERENCIADOR DE OBSTÁCULOS E POWER-UPS
    ============================================================================ */
 
 class ObstacleManager {
@@ -1886,23 +2372,23 @@ class ObstacleManager {
   update(dt, playerZ) {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
-      this.spawnTimer = 3.0 + Math.random() * 2.5;
+      this.spawnTimer = 3.2 + Math.random() * 2.8;
       this.spawnObstacle(playerZ);
     }
 
     for (let i = this.obstacles.length - 1; i >= 0; i--) {
       const o = this.obstacles[i];
-      if (playerZ - o.worldZ > 30.0 || o.destroyed) {
+      if (playerZ - o.worldZ > 35.0 || o.destroyed) {
         this.obstacles.splice(i, 1);
       }
     }
   }
 
   spawnObstacle(playerZ) {
-    const types = ['barrier', 'crate', 'wreck', 'cone'];
-    const type = types[Math.floor(Math.random() * types.length)];
+    const mapCfg = MAP_CONFIGS[this.game.selectedMap] || MAP_CONFIGS.desert;
+    const obsList = mapCfg.obstacles;
+    const type = obsList[Math.floor(Math.random() * obsList.length)];
     const spawnZ = playerZ + 140.0 + Math.random() * 30.0;
-    // Pelo menos 1 faixa sempre desobstruída para desvio justo
     const laneX = [-6.5, -2.0, 2.0, 6.5][Math.floor(Math.random() * 4)];
 
     this.obstacles.push({
@@ -1922,7 +2408,11 @@ class ObstacleManager {
       const m = Math3D.createMat4();
       Math3D.translateMat4(m, m, [curveCenter + o.laneX, 0, o.worldZ]);
       Math3D.rotateY(m, m, angle);
-      renderer.drawMesh(this.game.models[o.type].mesh, m);
+
+      const model = this.game.models[o.type];
+      if (model) {
+        renderer.drawMesh(model.mesh, m);
+      }
     }
   }
 }
@@ -1934,7 +2424,8 @@ class PowerUpManager {
   }
 
   spawn(x, z) {
-    const types = ['health', 'shield', 'rapid', 'damage'];
+    // Alta probabilidade de soltar cura de vida (+200 HP)
+    const types = ['health', 'health', 'shield', 'rapid', 'damage'];
     const type = types[Math.floor(Math.random() * types.length)];
     this.items.push({
       type: type,
@@ -1950,9 +2441,9 @@ class PowerUpManager {
       item.rot += dt * 3.5;
       item.y = 0.8 + Math.sin(item.rot * 2) * 0.2;
 
-      // Colisão / Coleta com o jogador
+      // Coleta por colisão com o veículo do jogador
       const dist = Math.hypot(item.x - player.worldX, item.z - player.worldZ);
-      if (dist < 2.5 && Math.abs(item.y - player.worldY) < 1.8) {
+      if (dist < 2.8 && Math.abs(item.y - player.worldY) < 2.0) {
         this.applyPowerUp(item.type, player);
         this.game.sound.playPowerup();
         this.game.debris.spawnHitSparks(item.x, item.y, item.z, 20);
@@ -1968,13 +2459,16 @@ class PowerUpManager {
 
   applyPowerUp(type, player) {
     if (type === 'health') {
-      player.hp = Math.min(player.maxHp, player.hp + 200);
+      // Cura +200 HP sem nunca ultrapassar 1000 HP
+      player.hp = Math.min(1000, player.hp + 200);
+      this.game.floatingTexts.spawn(player.worldX, player.worldY + 1.6, player.worldZ, '+200 HP', 'score');
     } else if (type === 'shield') {
-      player.shieldTimer = 10.0;
+      player.shieldTimer = 3.0; // Duração exata de ~3 segundos
+      this.game.floatingTexts.spawn(player.worldX, player.worldY + 1.6, player.worldZ, 'ESCUDO ATIVO!', 'score');
     } else if (type === 'rapid') {
-      player.rapidFireTimer = 10.0;
+      player.rapidFireTimer = 8.0;
     } else if (type === 'damage') {
-      player.doubleDamageTimer = 10.0;
+      player.doubleDamageTimer = 8.0;
     }
   }
 
@@ -1993,7 +2487,111 @@ class PowerUpManager {
 
 
 /* ============================================================================
-   11. CÂMERA 3D DINÂMICA
+   12. GERENCIADOR DE NÚMEROS FLUTUANTES (DANO E PONTUAÇÃO)
+   ============================================================================ */
+
+class FloatingTextManager {
+  constructor(game) {
+    this.game = game;
+    this.items = [];
+    this.container = document.getElementById('floating-texts-container');
+  }
+
+  spawn(worldX, worldY, worldZ, text, styleClass = 'damage') {
+    this.items.push({
+      x: worldX,
+      y: worldY,
+      z: worldZ,
+      text: text,
+      className: styleClass,
+      life: 1.1,
+      maxLife: 1.1,
+      vy: 2.2
+    });
+  }
+
+  clear() {
+    this.items = [];
+    if (this.container) this.container.innerHTML = '';
+  }
+
+  update(dt) {
+    if (!this.container) return;
+    this.container.innerHTML = '';
+
+    const width = this.game.canvas.width;
+    const height = this.game.canvas.height;
+    const vp = this.game.renderer.matViewProj;
+
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const item = this.items[i];
+      item.life -= dt;
+      if (item.life <= 0) {
+        this.items.splice(i, 1);
+        continue;
+      }
+
+      item.y += item.vy * dt;
+
+      const screenPos = Math3D.projectToScreen([item.x, item.y, item.z], vp, width, height);
+      if (screenPos && screenPos.depth < 140.0) {
+        const el = document.createElement('div');
+        el.className = `floating-text ${item.className}`;
+        el.textContent = item.text;
+        el.style.left = `${screenPos.x}px`;
+        el.style.top = `${screenPos.y}px`;
+        el.style.opacity = `${Math.min(1.0, item.life / 0.35)}`;
+        this.container.appendChild(el);
+      }
+    }
+  }
+}
+
+
+/* ============================================================================
+   13. TABELA DE MELHORES PONTUAÇÕES (LOCALSTORAGE)
+   ============================================================================ */
+
+const HighScores = {
+  STORAGE_KEY: 'voxel_road_strike_scores_v1',
+
+  get() {
+    try {
+      const data = localStorage.getItem(this.STORAGE_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  add(score, distance, enemies) {
+    try {
+      const list = this.get();
+      list.push({
+        score: Math.round(score),
+        distance: Math.round(distance),
+        enemies: enemies,
+        date: new Date().toLocaleDateString('pt-BR')
+      });
+      list.sort((a, b) => b.score - a.score);
+      const top10 = list.slice(0, 10);
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(top10));
+      return top10;
+    } catch {
+      return [];
+    }
+  },
+
+  clear() {
+    try {
+      localStorage.removeItem(this.STORAGE_KEY);
+    } catch {}
+  }
+};
+
+
+/* ============================================================================
+   14. CÂMERA 3D DINÂMICA
    ============================================================================ */
 
 class DynamicCamera {
@@ -2001,7 +2599,6 @@ class DynamicCamera {
     this.eye = [0, 5.0, -10.0];
     this.target = [0, 1.2, 10.0];
     this.up = [0, 1, 0];
-
     this.smoothPos = [0, 5.0, -10.0];
     this.shakeAmount = 0;
   }
@@ -2019,7 +2616,6 @@ class DynamicCamera {
     const shakeOffset = (allowShake && this.shakeAmount > 0) ? (Math.random() - 0.5) * this.shakeAmount * 1.2 : 0;
     const roadAngle = road.getTangentAngle(player.worldZ);
 
-    // Câmera posicionada suavemente atrás e acima do veículo
     const followDist = 8.5;
     const height = 3.6;
 
@@ -2027,7 +2623,6 @@ class DynamicCamera {
     const targetEyeY = player.worldY + height + shakeOffset * 0.5;
     const targetEyeZ = player.worldZ - Math.cos(roadAngle) * followDist;
 
-    // Interpolação suave (Lerp)
     const factor = Math.min(1.0, dt * 8.0);
     this.smoothPos[0] += (targetEyeX - this.smoothPos[0]) * factor;
     this.smoothPos[1] += (targetEyeY - this.smoothPos[1]) * factor;
@@ -2037,12 +2632,11 @@ class DynamicCamera {
     this.eye[1] = this.smoothPos[1];
     this.eye[2] = this.smoothPos[2];
 
-    // Alvo do olhar à frente na estrada
     this.target[0] = player.worldX + Math.sin(roadAngle) * 20.0;
     this.target[1] = player.worldY + 1.2;
     this.target[2] = player.worldZ + Math.cos(roadAngle) * 20.0;
 
-    // Suave inclinação em Roll
+    // Roll banking da câmera
     this.up[0] = Math.sin(-player.tiltRoll * 0.4);
     this.up[1] = Math.cos(-player.tiltRoll * 0.4);
     this.up[2] = 0;
@@ -2051,7 +2645,7 @@ class DynamicCamera {
 
 
 /* ============================================================================
-   12. NÚCLEO DO JOGO E LOOP PRINCIPAL (GAME LOOP)
+   15. NÚCLEO DO JOGO E LOOP PRINCIPAL (GAME LOOP)
    ============================================================================ */
 
 class Game {
@@ -2059,28 +2653,41 @@ class Game {
     this.canvas = document.getElementById('glCanvas');
     this.renderer = new WebGLRenderer(this.canvas);
     this.sound = new SoundSystem();
-    this.camera = new DynamicCamera();
-    this.road = new RoadManager(this.renderer);
-    this.debris = new DebrisParticleSystem(this.renderer);
-    this.weapons = new WeaponSystem(this);
-    this.enemies = new EnemyManager(this);
-    this.obstacles = new ObstacleManager(this);
-    this.powerups = new PowerUpManager(this);
 
-    // Inicialização dos Modelos Voxel
+    // Modelos 3D Procedurais Voxel Pré-Bakeados
     this.models = {
       interceptor: VoxelBuilder.buildInterceptor(this.renderer),
-      raptor: VoxelBuilder.buildRaptor(this.renderer),
-      titan: VoxelBuilder.buildTitan(this.renderer),
-      scout: VoxelBuilder.buildEnemyScout(this.renderer),
-      cruiser: VoxelBuilder.buildEnemyCruiser(this.renderer),
-      enforcer: VoxelBuilder.buildEnemyEnforcer(this.renderer),
-      hauler: VoxelBuilder.buildEnemyHauler(this.renderer),
-      behemoth: VoxelBuilder.buildEnemyBehemoth(this.renderer),
+      raptor: VoxelBuilder.buildRaptorPlayer(this.renderer),
+      titan: VoxelBuilder.buildTitanPlayer(this.renderer),
+
+      // Inimigos detalhados
+      enemy_raptor: VoxelBuilder.buildEnemyRaptor(this.renderer),
+      enemy_titan: VoxelBuilder.buildEnemyTitan(this.renderer),
+      enemy_scout: VoxelBuilder.buildEnemyScout(this.renderer),
+      enemy_hauler: VoxelBuilder.buildEnemyHauler(this.renderer),
+
+      // Props de Cenário
+      desert_mesa: VoxelBuilder.buildDesertMesa(this.renderer),
+      desert_cactus: VoxelBuilder.buildDesertCactus(this.renderer),
+      snow_pine: VoxelBuilder.buildSnowPine(this.renderer),
+      snow_mountain: VoxelBuilder.buildSnowMountain(this.renderer),
+      japan_minka: VoxelBuilder.buildJapanMinka(this.renderer),
+      japan_torii: VoxelBuilder.buildJapanTorii(this.renderer),
+      japan_sakura: VoxelBuilder.buildJapanSakura(this.renderer),
+      japan_lantern: VoxelBuilder.buildJapanLantern(this.renderer),
+
+      // Obstáculos
+      desert_rock: VoxelBuilder.buildDesertRock(this.renderer),
+      snow_boulder: VoxelBuilder.buildSnowBoulder(this.renderer),
+      pine_log: VoxelBuilder.buildPineLog(this.renderer),
       barrier: VoxelBuilder.buildBarrier(this.renderer),
-      crate: VoxelBuilder.buildCrate(this.renderer),
       wreck: VoxelBuilder.buildWreck(this.renderer),
-      cone: VoxelBuilder.buildCone(this.renderer),
+      stone_lantern: VoxelBuilder.buildJapanLantern(this.renderer),
+      wooden_gate_beam: VoxelBuilder.buildWoodenBeam(this.renderer),
+      frozen_crate: VoxelBuilder.buildCrate(this.renderer),
+      rural_crate: VoxelBuilder.buildCrate(this.renderer),
+
+      // Tokens Power-up e Escudo
       token_health: VoxelBuilder.buildTokenHealth(this.renderer),
       token_shield: VoxelBuilder.buildTokenShield(this.renderer),
       token_rapid: VoxelBuilder.buildTokenRapid(this.renderer),
@@ -2088,32 +2695,48 @@ class Game {
       shield_bubble: VoxelBuilder.buildShieldBubble(this.renderer)
     };
 
+    // Sub-sistemas
+    this.camera = new DynamicCamera();
+    this.debris = new DebrisParticleSystem(this.renderer);
+    this.road = new RoadManager(this.renderer);
+    this.weapons = new WeaponSystem(this);
+    this.enemies = new EnemyManager(this);
+    this.obstacles = new ObstacleManager(this);
+    this.powerups = new PowerUpManager(this);
+    this.floatingTexts = new FloatingTextManager(this);
+
+    // Seleções do Jogador
+    this.selectedVehicle = 'interceptor';
+    this.selectedWeapon = 'machinegun';
+    this.selectedMap = 'desert';
+
+    // Estado Geral do Jogo
+    this.state = 'MENU'; // 'MENU' | 'SELECT' | 'PLAYING' | 'PAUSED' | 'GAMEOVER'
+    this.score = 0;
+    this.distance = 0;
+    this.wave = 1;
+    this.kills = 0;
+    this.combo = 1; // Começa rigorosamente em x1
+    this.maxCombo = 1;
+    this.comboTimer = 0;
+
     // Configurações do Usuário
     this.settings = {
-      masterVol: 80,
-      musicVol: 65,
-      sfxVol: 85,
       sensitivity: 100,
       cameraShake: true,
       graphics: 'high'
     };
 
-    // Estado da Sessão
-    this.state = 'MENU'; // 'MENU', 'SELECT', 'PLAYING', 'GAMEOVER'
-    this.selectedVehicle = 'interceptor';
-    this.selectedWeapon = 'machinegun';
-
-    // Pontuação e Combos
-    this.score = 0;
-    this.distance = 0;
-    this.wave = 1;
-    this.kills = 0;
-    this.combo = 1;
-    this.maxCombo = 1;
-    this.comboTimer = 0;
-
-    // Inputs
-    this.inputs = { left: false, right: false, shootPressed: false };
+    // Entradas do Usuário
+    this.inputs = {
+      left: false,
+      right: false,
+      up: false,
+      down: false,
+      shootHeld: false, // Segurar ESPAÇO
+      keyQ: false,
+      keyE: false
+    };
 
     this.player = new PlayerVehicle(this, this.selectedVehicle);
     this.menuPreviewAngle = 0;
@@ -2127,26 +2750,46 @@ class Game {
 
   setupEvents() {
     window.addEventListener('keydown', (e) => {
-      // Ativa e resume o contexto de áudio nativo no primeiro input do usuário
       if (this.sound) {
         this.sound.init();
         this.sound.resume();
       }
 
+      // Tecla ESC para pausar/continuar
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        this.togglePause();
+        return;
+      }
+
+      // Controles de Direção
       if (e.code === 'KeyA' || e.code === 'ArrowLeft') this.inputs.left = true;
       if (e.code === 'KeyD' || e.code === 'ArrowRight') this.inputs.right = true;
+
+      // Velocidade do Veículo (W/S)
+      if (e.code === 'KeyW' || e.code === 'ArrowUp') this.inputs.up = true;
+      if (e.code === 'KeyS' || e.code === 'ArrowDown') this.inputs.down = true;
+
+      // Segurar ESPAÇO para Atirar Continuamente
       if (e.code === 'Space') {
         e.preventDefault();
-        // Não permite tiro automático: cada pressão da tecla dispara um tiro
-        if (!e.repeat) {
-          this.inputs.shootPressed = true;
-        }
+        this.inputs.shootHeld = true;
       }
+
+      // Q e E para canos esquerdo/direito da metralhadora
+      if (e.code === 'KeyQ') this.inputs.keyQ = true;
+      if (e.code === 'KeyE') this.inputs.keyE = true;
     });
 
     window.addEventListener('keyup', (e) => {
       if (e.code === 'KeyA' || e.code === 'ArrowLeft') this.inputs.left = false;
       if (e.code === 'KeyD' || e.code === 'ArrowRight') this.inputs.right = false;
+      if (e.code === 'KeyW' || e.code === 'ArrowUp') this.inputs.up = false;
+      if (e.code === 'KeyS' || e.code === 'ArrowDown') this.inputs.down = false;
+
+      if (e.code === 'Space') this.inputs.shootHeld = false;
+      if (e.code === 'KeyQ') this.inputs.keyQ = false;
+      if (e.code === 'KeyE') this.inputs.keyE = false;
     });
 
     window.addEventListener('pointerdown', () => {
@@ -2160,7 +2803,7 @@ class Game {
   }
 
   setupUI() {
-    // Botões do Menu Principal
+    // Menu Principal
     document.getElementById('btn-menu-play').addEventListener('click', () => {
       this.sound.playClick();
       this.showScreen('screen-select');
@@ -2171,56 +2814,103 @@ class Game {
       this.showScreen('screen-how-to-play');
     });
 
+    document.getElementById('btn-menu-highscores').addEventListener('click', () => {
+      this.sound.playClick();
+      this.renderHighScoresTable();
+      this.showScreen('screen-highscores');
+    });
+
     document.getElementById('btn-menu-settings').addEventListener('click', () => {
       this.sound.playClick();
       this.showScreen('screen-settings');
     });
 
-    // Botões de Voltar dos Modais
+    // Como Jogar
     document.getElementById('btn-how-back').addEventListener('click', () => {
       this.sound.playClick();
       this.showScreen('screen-main-menu');
     });
 
+    // Recordes
+    document.getElementById('btn-highscores-back').addEventListener('click', () => {
+      this.sound.playClick();
+      this.showScreen('screen-main-menu');
+    });
+
+    // Configurações
     document.getElementById('btn-settings-back').addEventListener('click', () => {
       this.sound.playClick();
       this.showScreen('screen-main-menu');
     });
 
+    document.getElementById('btn-clear-scores').addEventListener('click', () => {
+      if (confirm('Deseja realmente limpar todos os recordes salvos?')) {
+        HighScores.clear();
+        alert('Recordes apagados com sucesso!');
+      }
+    });
+
+    // Seleção de Veículos
+    const vCards = document.querySelectorAll('#vehicle-cards .selection-card');
+    vCards.forEach(card => {
+      card.addEventListener('click', () => {
+        this.sound.playClick();
+        vCards.forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        this.selectedVehicle = card.getAttribute('data-vehicle');
+      });
+    });
+
+    // Seleção de Armas
+    const wCards = document.querySelectorAll('#weapon-cards .selection-card');
+    wCards.forEach(card => {
+      card.addEventListener('click', () => {
+        this.sound.playClick();
+        wCards.forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        this.selectedWeapon = card.getAttribute('data-weapon');
+      });
+    });
+
+    // Seleção de Mapas
+    const mCards = document.querySelectorAll('#map-cards .selection-card');
+    mCards.forEach(card => {
+      card.addEventListener('click', () => {
+        this.sound.playClick();
+        mCards.forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        this.selectedMap = card.getAttribute('data-map');
+      });
+    });
+
+    // Botões de Preparação
     document.getElementById('btn-select-back').addEventListener('click', () => {
       this.sound.playClick();
       this.showScreen('screen-main-menu');
     });
 
-    // Seleção de Veículos
-    const vehicleCards = document.querySelectorAll('#vehicle-cards .selection-card');
-    vehicleCards.forEach((card) => {
-      card.addEventListener('click', () => {
-        this.sound.playClick();
-        vehicleCards.forEach((c) => c.classList.remove('selected'));
-        card.classList.add('selected');
-        this.selectedVehicle = card.dataset.vehicle;
-      });
-    });
-
-    // Seleção de Armas
-    const weaponCards = document.querySelectorAll('#weapon-cards .selection-card');
-    weaponCards.forEach((card) => {
-      card.addEventListener('click', () => {
-        this.sound.playClick();
-        weaponCards.forEach((c) => c.classList.remove('selected'));
-        card.classList.add('selected');
-        this.selectedWeapon = card.dataset.weapon;
-      });
-    });
-
-    // Iniciar Partida
     document.getElementById('btn-start-game').addEventListener('click', () => {
       this.sound.playClick();
       this.startNewGame();
     });
 
-    // Botões de Game Over
+    // Menu de Pausa
+    document.getElementById('btn-pause-resume').addEventListener('click', () => {
+      this.sound.playClick();
+      this.togglePause();
+    });
+
+    document.getElementById('btn-pause-restart').addEventListener('click', () => {
+      this.sound.playClick();
+      this.startNewGame();
+    });
+
+    document.getElementById('btn-pause-menu').addEventListener('click', () => {
+      this.sound.playClick();
+      this.returnToMenu();
+    });
+
+    // Game Over
     document.getElementById('btn-game-restart').addEventListener('click', () => {
       this.sound.playClick();
       this.startNewGame();
@@ -2228,89 +2918,145 @@ class Game {
 
     document.getElementById('btn-game-menu').addEventListener('click', () => {
       this.sound.playClick();
-      this.showScreen('screen-main-menu');
-      this.state = 'MENU';
+      this.returnToMenu();
     });
 
-    // Controles de Configurações
-    const masterSlider = document.getElementById('setting-master-vol');
-    const masterLabel = document.getElementById('label-master-vol');
-    masterSlider.addEventListener('input', (e) => {
-      this.settings.masterVol = parseInt(e.target.value);
-      masterLabel.textContent = e.target.value + '%';
-      this.sound.setMasterVolume(this.settings.masterVol / 100);
-    });
+    // Sliders de Configurações
+    this.bindRangeSlider('setting-master-vol', 'label-master-vol', (v) => this.sound.setMasterVolume(v / 100));
+    this.bindRangeSlider('setting-music-vol', 'label-music-vol', (v) => this.sound.setMusicVolume(v / 100));
+    this.bindRangeSlider('setting-sfx-vol', 'label-sfx-vol', (v) => this.sound.setSfxVolume(v / 100));
+    this.bindRangeSlider('setting-sensitivity', 'label-sensitivity', (v) => this.settings.sensitivity = v);
 
-    const musicSlider = document.getElementById('setting-music-vol');
-    const musicLabel = document.getElementById('label-music-vol');
-    musicSlider.addEventListener('input', (e) => {
-      this.settings.musicVol = parseInt(e.target.value);
-      musicLabel.textContent = e.target.value + '%';
-      this.sound.setMusicVolume(this.settings.musicVol / 100);
-    });
-
-    const sfxSlider = document.getElementById('setting-sfx-vol');
-    const sfxLabel = document.getElementById('label-sfx-vol');
-    sfxSlider.addEventListener('input', (e) => {
-      this.settings.sfxVol = parseInt(e.target.value);
-      sfxLabel.textContent = e.target.value + '%';
-      this.sound.setSfxVolume(this.settings.sfxVol / 100);
-    });
-
-    const sensSlider = document.getElementById('setting-sensitivity');
-    const sensLabel = document.getElementById('label-sensitivity');
-    sensSlider.addEventListener('input', (e) => {
-      this.settings.sensitivity = parseInt(e.target.value);
-      sensLabel.textContent = e.target.value + '%';
-    });
-
-    const shakeCheck = document.getElementById('setting-shake');
-    shakeCheck.addEventListener('change', (e) => {
+    document.getElementById('setting-shake').addEventListener('change', (e) => {
       this.settings.cameraShake = e.target.checked;
     });
 
-    const graphicsSelect = document.getElementById('setting-graphics');
-    graphicsSelect.addEventListener('change', (e) => {
+    document.getElementById('setting-graphics').addEventListener('change', (e) => {
       this.settings.graphics = e.target.value;
       if (this.settings.graphics === 'low') {
         this.debris.maxDebris = 120;
         this.debris.maxParticles = 150;
       } else if (this.settings.graphics === 'medium') {
-        this.debris.maxDebris = 250;
-        this.debris.maxParticles = 300;
+        this.debris.maxDebris = 300;
+        this.debris.maxParticles = 350;
       } else {
-        this.debris.maxDebris = 400;
-        this.debris.maxParticles = 500;
+        this.debris.maxDebris = 500;
+        this.debris.maxParticles = 600;
       }
     });
   }
 
+  bindRangeSlider(inputId, labelId, callback) {
+    const input = document.getElementById(inputId);
+    const label = document.getElementById(labelId);
+    if (!input || !label) return;
+    input.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      label.textContent = `${val}%`;
+      callback(val);
+    });
+  }
+
   showScreen(screenId) {
-    document.querySelectorAll('.screen').forEach((s) => s.classList.add('hidden'));
+    const screens = document.querySelectorAll('.screen');
+    screens.forEach(s => s.classList.add('hidden'));
+
     const target = document.getElementById(screenId);
     if (target) target.classList.remove('hidden');
 
     const hud = document.getElementById('hud');
     if (screenId === 'hud') {
       hud.classList.remove('hidden');
-    } else {
+    } else if (screenId !== 'screen-pause') {
       hud.classList.add('hidden');
     }
   }
 
+  togglePause() {
+    if (this.state === 'PLAYING') {
+      this.state = 'PAUSED';
+      this.sound.stopMusic();
+      const pauseScreen = document.getElementById('screen-pause');
+      if (pauseScreen) pauseScreen.classList.remove('hidden');
+    } else if (this.state === 'PAUSED') {
+      this.state = 'PLAYING';
+      this.lastTime = performance.now();
+      this.sound.startMusic();
+      const pauseScreen = document.getElementById('screen-pause');
+      if (pauseScreen) pauseScreen.classList.add('hidden');
+    }
+  }
+
+  // RESET COMPLETO DA PARTIDA
   startNewGame() {
     this.sound.init();
     this.sound.resume();
+    this.sound.startMusic();
 
+    // 1. Reset Rigoroso de Variáveis de Estado
     this.score = 0;
     this.distance = 0;
     this.wave = 1;
     this.kills = 0;
-    this.combo = 1;
+    this.combo = 1;       // Começa rigorosamente em x1
     this.maxCombo = 1;
     this.comboTimer = 0;
 
+    // 2. Carrega o mapa escolhido
+    this.road.setMap(this.selectedMap);
+
+    // 3. Novo Veículo do Jogador limpo
     this.player = new PlayerVehicle(this, this.selectedVehicle);
+
+    // 4. Limpa todas as entidades antigas
+    this.enemies.enemies = [];
+    this.obstacles.obstacles = [];
+    this.powerups.items = [];
+    this.weapons.projectiles = [];
+    this.weapons.cooldown = 0;
+    this.debris.debrisList = [];
+    this.debris.particleList = [];
+    this.debris.weatherParticles = [];
+    this.floatingTexts.clear();
+
+    // 5. Reset Completo de Elementos da HUD
+    this.resetHUD();
+
+    // 6. Inicia simulação
+    this.state = 'PLAYING';
+    this.showScreen('hud');
+    this.showWaveAnnouncement(1, 'PREPARE-SE');
+  }
+
+  resetHUD() {
+    document.getElementById('hud-hp-text').textContent = '1000 / 1000';
+    document.getElementById('hud-hp-fill').style.width = '100%';
+    document.getElementById('hud-shield-fill').style.width = '0%';
+    document.getElementById('hud-shield-badge').classList.add('hidden');
+
+    document.getElementById('hud-score').textContent = '0';
+    document.getElementById('hud-distance').textContent = '0 m';
+
+    const comboPanel = document.getElementById('hud-combo-panel');
+    comboPanel.classList.add('hidden');
+    document.getElementById('hud-combo-mult').textContent = 'x1';
+    document.getElementById('hud-combo-fill').style.width = '100%';
+
+    document.getElementById('powerup-rapid-fire').classList.add('hidden');
+    document.getElementById('powerup-double-damage').classList.add('hidden');
+    document.getElementById('enemy-health-bars').innerHTML = '';
+
+    const damageFlash = document.getElementById('damage-flash');
+    if (damageFlash) damageFlash.classList.remove('active');
+  }
+
+  returnToMenu() {
+    this.sound.stopMusic();
+    this.state = 'MENU';
+    this.resetHUD();
+    this.floatingTexts.clear();
+
+    // Limpa todas as entidades para liberar memória
     this.enemies.enemies = [];
     this.obstacles.obstacles = [];
     this.powerups.items = [];
@@ -2318,10 +3064,30 @@ class Game {
     this.debris.debrisList = [];
     this.debris.particleList = [];
 
-    this.state = 'PLAYING';
-    this.showScreen('hud');
+    this.showScreen('screen-main-menu');
+  }
 
-    this.showWaveAnnouncement(1, 'PREPARE-SE');
+  renderHighScoresTable() {
+    const tbody = document.getElementById('highscores-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const list = HighScores.get();
+    if (list.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">Nenhum recorde registrado ainda. Participe de uma missão!</td></tr>';
+      return;
+    }
+
+    list.forEach((entry, idx) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>#${idx + 1}</td>
+        <td><strong>${entry.score.toLocaleString()}</strong></td>
+        <td>${entry.distance} m</td>
+        <td>${entry.enemies}</td>
+      `;
+      tbody.appendChild(tr);
+    });
   }
 
   showWaveAnnouncement(waveNum, subtitle = '') {
@@ -2330,20 +3096,16 @@ class Game {
     const sub = document.getElementById('hud-wave-subtitle');
     const tag = document.getElementById('hud-wave-tag');
 
-    if (waveNum >= 4) {
-      banner.classList.add('danger');
-    } else {
-      banner.classList.remove('danger');
-    }
+    if (waveNum >= 4) banner.classList.add('danger');
+    else banner.classList.remove('danger');
 
     title.textContent = (waveNum >= 4 && waveNum % 2 === 0) ? 'PERIGO: ONDA PESADA' : `ONDA ${waveNum}`;
     sub.textContent = subtitle || 'FROTA INIMIGA DETECTADA';
     tag.textContent = `ONDA ${waveNum}`;
 
     banner.classList.remove('hidden');
-    // Reinicia animação CSS
     banner.style.animation = 'none';
-    banner.offsetHeight; // trigger reflow
+    banner.offsetHeight;
     banner.style.animation = '';
 
     setTimeout(() => {
@@ -2351,15 +3113,18 @@ class Game {
     }, 2400);
   }
 
-  addScore(pts) {
-    this.score += pts * this.combo;
-  }
-
-  addKill() {
+  addKill(basePts, worldX, worldY, worldZ) {
     this.kills++;
+    const addedScore = basePts * this.combo;
+    this.score += addedScore;
+
+    // Floating Score Points (+600, +1200)
+    const comboTag = this.combo > 1 ? ` (x${this.combo})` : '';
+    this.floatingTexts.spawn(worldX, worldY + 1.2, worldZ, `+${addedScore}${comboTag}`, 'score');
+
     this.combo = Math.min(10, this.combo + 1);
     this.maxCombo = Math.max(this.maxCombo, this.combo);
-    this.comboTimer = 4.0; // 4 segundos para manter combo
+    this.comboTimer = 4.0;
 
     const comboPanel = document.getElementById('hud-combo-panel');
     const comboMult = document.getElementById('hud-combo-mult');
@@ -2374,19 +3139,24 @@ class Game {
 
   onPlayerDied() {
     this.state = 'GAMEOVER';
+    this.sound.stopMusic();
     this.sound.playExplosion(true);
-    this.camera.addShake(0.8);
+    this.camera.addShake(0.85);
 
     const modelObj = this.models[this.player.type];
-    this.debris.spawnVehicleDestruction(
-      this.player.worldX, this.player.worldY, this.player.worldZ,
-      modelObj.boxes, 1.6
-    );
+    if (modelObj) {
+      this.debris.spawnVehicleDestruction(
+        this.player.worldX, this.player.worldY, this.player.worldZ,
+        modelObj.boxes, 1.8
+      );
+    }
 
-    // Exibe tela de Game Over após breve desaceleração
+    // Registra pontuação final no localStorage
+    HighScores.add(this.score, this.distance, this.kills);
+
     setTimeout(() => {
       document.getElementById('go-distance').textContent = `${Math.floor(this.distance)} m`;
-      document.getElementById('go-score').textContent = this.score.toLocaleString();
+      document.getElementById('go-score').textContent = Math.round(this.score).toLocaleString();
       document.getElementById('go-enemies').textContent = this.kills;
       document.getElementById('go-combo').textContent = `x${this.maxCombo}`;
       document.getElementById('go-wave').textContent = `Onda ${this.wave}`;
@@ -2394,23 +3164,26 @@ class Game {
     }, 1200);
   }
 
-  // Detecção de Colisões Físicas 3D (AABB)
+  // Detecção de Colisões Físicas 3D
   checkCollisions() {
     const p = this.player;
     if (p.destroyed) return;
 
     // 1. Projéteis do Jogador contra Inimigos
-    for (const proj of this.weapons.projectiles) {
-      if (!proj.active || !proj.isPlayer) continue;
+    for (let i = this.weapons.projectiles.length - 1; i >= 0; i--) {
+      const proj = this.weapons.projectiles[i];
+      if (!proj.isPlayer) continue;
 
       for (const e of this.enemies.enemies) {
         if (e.destroyed) continue;
         const dx = Math.abs(proj.x - e.worldX);
+        const dy = Math.abs(proj.y - e.worldY);
         const dz = Math.abs(proj.z - e.worldZ);
-        if (dx < e.stats.width / 2 + 0.3 && dz < e.stats.depth / 2 + 0.3) {
-          proj.active = false;
+
+        if (dx < e.config.width * 0.55 && dy < e.config.height * 0.7 && dz < e.config.depth * 0.55) {
           e.takeDamage(proj.damage);
-          this.debris.spawnHitSparks(proj.x, proj.y, proj.z, 6);
+          this.debris.spawnHitSparks(proj.x, proj.y, proj.z, 8);
+          proj.active = false;
           break;
         }
       }
@@ -2419,14 +3192,16 @@ class Game {
       if (proj.active) {
         for (const o of this.obstacles.obstacles) {
           if (o.destroyed) continue;
-          const curveX = this.road.getCurveX(o.worldZ);
-          const dx = Math.abs(proj.x - (curveX + o.laneX));
+          const curveCenter = this.road.getCurveX(o.worldZ);
+          const obsX = curveCenter + o.laneX;
+          const dx = Math.abs(proj.x - obsX);
           const dz = Math.abs(proj.z - o.worldZ);
-          if (dx < o.width / 2 + 0.2 && dz < o.depth / 2 + 0.2) {
-            proj.active = false;
+
+          if (dx < o.width * 0.6 && dz < o.depth * 0.6) {
             o.destroyed = true;
-            this.debris.spawnHitSparks(proj.x, proj.y, proj.z, 10);
-            this.sound.playHit();
+            this.sound.playExplosion(false);
+            this.debris.spawnHitSparks(obsX, 0.6, o.worldZ, 12);
+            proj.active = false;
             break;
           }
         }
@@ -2435,57 +3210,52 @@ class Game {
 
     // 2. Projéteis Inimigos contra o Jogador
     for (const proj of this.weapons.projectiles) {
-      if (!proj.active || proj.isPlayer) continue;
+      if (proj.isPlayer || !proj.active) continue;
       const dx = Math.abs(proj.x - p.worldX);
+      const dy = Math.abs(proj.y - p.worldY);
       const dz = Math.abs(proj.z - p.worldZ);
-      if (dx < p.stats.width / 2 && dz < p.stats.depth / 2) {
+
+      if (dx < p.stats.width * 0.5 && dy < p.stats.height * 0.65 && dz < p.stats.depth * 0.5) {
         proj.active = false;
         p.takeDamage(proj.damage, false);
         this.debris.spawnHitSparks(proj.x, proj.y, proj.z, 8);
       }
     }
 
-    // 3. Colisão Física: Jogador contra Inimigos
+    // 3. Colisões Físicas Diretas: Jogador x Veículos Inimigos
     for (const e of this.enemies.enemies) {
       if (e.destroyed) continue;
       const dx = Math.abs(p.worldX - e.worldX);
       const dz = Math.abs(p.worldZ - e.worldZ);
-      const minX = (p.stats.width + e.stats.width) / 2;
-      const minZ = (p.stats.depth + e.stats.depth) / 2;
 
-      if (dx < minX && dz < minZ) {
-        // Empurrão lateral mútuo
-        const pushDir = (p.worldX > e.worldX) ? 1 : -1;
-        p.laneX += pushDir * 1.5;
-        e.laneX -= pushDir * 1.5;
-
-        const crashDmg = e.stats.isTruck ? 180 : 80;
-        p.takeDamage(crashDmg, true);
-        e.takeDamage(120);
-
+      if (dx < (p.stats.width + e.config.width) * 0.48 && dz < (p.stats.depth + e.config.depth) * 0.48) {
+        p.takeDamage(120, true);
+        e.takeDamage(150);
         this.sound.playCrash();
-        this.debris.spawnHitSparks((p.worldX + e.worldX) / 2, p.worldY, p.worldZ, 15);
+        this.camera.addShake(0.5);
+        this.debris.spawnHitSparks((p.worldX + e.worldX) * 0.5, 0.6, (p.worldZ + e.worldZ) * 0.5, 16);
       }
     }
 
-    // 4. Colisão: Jogador contra Obstáculos
+    // 4. Colisões Físicas: Jogador x Obstáculos
     for (const o of this.obstacles.obstacles) {
       if (o.destroyed) continue;
-      const curveX = this.road.getCurveX(o.worldZ);
-      const obsX = curveX + o.laneX;
+      const curveCenter = this.road.getCurveX(o.worldZ);
+      const obsX = curveCenter + o.laneX;
       const dx = Math.abs(p.worldX - obsX);
       const dz = Math.abs(p.worldZ - o.worldZ);
-      if (dx < (p.stats.width + o.width) / 2 && dz < (p.stats.depth + o.depth) / 2) {
+
+      if (dx < (p.stats.width + o.width) * 0.45 && dz < (p.stats.depth + o.depth) * 0.45) {
         o.destroyed = true;
         p.takeDamage(100, true);
         this.sound.playCrash();
-        this.debris.spawnHitSparks(obsX, 0.6, o.worldZ, 20);
+        this.debris.spawnHitSparks(obsX, 0.6, o.worldZ, 16);
       }
     }
   }
 
   updateHUD(dt) {
-    // Barra de Vida
+    // Barra de Vida Numérica do Jogador
     const hpText = document.getElementById('hud-hp-text');
     const hpFill = document.getElementById('hud-hp-fill');
     const shieldFill = document.getElementById('hud-shield-fill');
@@ -2498,15 +3268,19 @@ class Game {
 
     if (this.player.shieldTimer > 0) {
       shieldBadge.classList.remove('hidden');
-      shieldFill.style.width = `${(this.player.shieldTimer / 10.0) * 100}%`;
+      shieldFill.style.width = `${(this.player.shieldTimer / 3.0) * 100}%`;
     } else {
       shieldBadge.classList.add('hidden');
       shieldFill.style.width = '0%';
     }
 
-    // Distância e Pontuação
-    document.getElementById('hud-distance').textContent = `${Math.floor(this.distance)} m`;
-    document.getElementById('hud-score').textContent = this.score.toLocaleString();
+    // Sistema de Pontuação Unificado: Pontuação Total e Distância em Metros/KM
+    document.getElementById('hud-score').textContent = Math.round(this.score).toLocaleString();
+    if (this.distance >= 1000) {
+      document.getElementById('hud-distance').textContent = `${(this.distance / 1000).toFixed(1)} km`;
+    } else {
+      document.getElementById('hud-distance').textContent = `${Math.floor(this.distance)} m`;
+    }
 
     // Combo
     const comboPanel = document.getElementById('hud-combo-panel');
@@ -2520,12 +3294,12 @@ class Game {
       }
     }
 
-    // Power-ups
+    // Power-ups Ativos
     const rapidCard = document.getElementById('powerup-rapid-fire');
     const rapidFill = document.getElementById('powerup-rapid-fill');
     if (this.player.rapidFireTimer > 0) {
       rapidCard.classList.remove('hidden');
-      rapidFill.style.width = `${(this.player.rapidFireTimer / 10.0) * 100}%`;
+      rapidFill.style.width = `${(this.player.rapidFireTimer / 8.0) * 100}%`;
     } else {
       rapidCard.classList.add('hidden');
     }
@@ -2534,12 +3308,12 @@ class Game {
     const damageFill = document.getElementById('powerup-damage-fill');
     if (this.player.doubleDamageTimer > 0) {
       damageCard.classList.remove('hidden');
-      damageFill.style.width = `${(this.player.doubleDamageTimer / 10.0) * 100}%`;
+      damageFill.style.width = `${(this.player.doubleDamageTimer / 8.0) * 100}%`;
     } else {
       damageCard.classList.add('hidden');
     }
 
-    // Barras de HP Flutuantes acima dos Inimigos (Projeção 3D -> 2D)
+    // Barras de HP dos Inimigos com Número Numérico Visível
     this.updateEnemyHealthBars();
   }
 
@@ -2550,13 +3324,13 @@ class Game {
 
     const width = this.canvas.width;
     const height = this.canvas.height;
+    const vp = this.renderer.matViewProj;
 
     for (const e of this.enemies.enemies) {
-      // Exibe barra se o inimigo sofreu dano recente ou está muito próximo
-      if (e.hp < e.maxHp && !e.destroyed) {
+      if (!e.destroyed) {
         const screenPos = Math3D.projectToScreen(
-          [e.worldX, e.worldY + e.stats.height + 0.6, e.worldZ],
-          this.renderer.matViewProj, width, height
+          [e.worldX, e.worldY + e.config.height + 0.6, e.worldZ],
+          vp, width, height
         );
         if (screenPos && screenPos.depth < 120.0) {
           const bar = document.createElement('div');
@@ -2568,14 +3342,18 @@ class Game {
           fill.className = 'enemy-hp-fill';
           fill.style.width = `${Math.max(0, (e.hp / e.maxHp) * 100)}%`;
 
+          const text = document.createElement('div');
+          text.className = 'enemy-hp-text';
+          text.textContent = `${Math.ceil(e.hp)} / ${e.maxHp}`;
+
           bar.appendChild(fill);
+          bar.appendChild(text);
           container.appendChild(bar);
         }
       }
     }
   }
 
-  // Loop Principal (requestAnimationFrame)
   loop(timestamp) {
     const dt = Math.min(0.06, (timestamp - this.lastTime) / 1000.0);
     this.lastTime = timestamp;
@@ -2584,56 +3362,63 @@ class Game {
       // 1. Atualizações do Jogador e Controles
       this.player.update(dt, this.inputs);
 
-      if (this.inputs.shootPressed) {
-        this.inputs.shootPressed = false; // Consome o disparo individual
+      // 2. Sistema de Disparo Automático (Segurar ESPAÇO)
+      if (this.inputs.shootHeld) {
         const roadAngle = this.road.getTangentAngle(this.player.worldZ);
         this.weapons.firePlayer(
           this.selectedWeapon,
           this.player.worldX, this.player.worldY, this.player.worldZ,
           roadAngle,
           this.player.doubleDamageTimer > 0,
-          this.player.rapidFireTimer > 0
+          this.player.rapidFireTimer > 0,
+          this.inputs.keyQ,
+          this.inputs.keyE
         );
       }
 
-      // 2. Progresso de Distância, Pontuação e Ondas
+      // 3. Pontuação Total Unificada: contribuição progressiva da distância
       this.distance = this.player.worldZ;
-      this.score += Math.floor(dt * this.player.forwardSpeed * 0.4); // Bônus progressivo por distância percorrida
-      const targetWave = Math.floor(this.distance / 450) + 1;
+      this.score += dt * this.player.forwardSpeed * 0.8;
+
+      // Ondas graduais
+      const targetWave = Math.floor(this.distance / 500) + 1;
       if (targetWave > this.wave) {
         this.wave = targetWave;
         this.showWaveAnnouncement(this.wave);
       }
 
-      // 3. Gerenciamento de Entidades
-      this.road.updateBiome(this.distance);
+      // 4. Atualização de Entidades
+      const mapCfg = MAP_CONFIGS[this.selectedMap] || MAP_CONFIGS.desert;
+      this.debris.updateWeather(dt, this.player.worldZ, mapCfg.weather);
+
       this.enemies.update(dt, this.player);
       this.obstacles.update(dt, this.player.worldZ);
       this.powerups.update(dt, this.player);
       this.weapons.update(dt);
       this.debris.update(dt);
+      this.floatingTexts.update(dt);
 
-      // 4. Física e Colisões
+      // 5. Física e Colisões
       this.checkCollisions();
 
-      // 5. Câmera Dinâmica
+      // 6. Câmera Dinâmica
       this.camera.update(dt, this.player, this.road, this.settings.cameraShake);
 
-      // 6. Atualização de Interface
+      // 7. Interface HUD
       this.updateHUD(dt);
 
-      // 7. Renderização da Cena 3D
+      // 8. Renderização WebGL Completa
       this.renderer.beginFrame(this.camera);
-      this.road.render(this.renderer, this.player.worldZ);
+      this.road.render(this.renderer, this.player.worldZ, this.models);
       this.obstacles.render(this.renderer);
       this.powerups.render(this.renderer);
       this.enemies.render(this.renderer);
       this.player.render(this.renderer);
-      this.weapons.render(this.renderer);
+      this.weapons.render(this.renderer, this.player, this.road);
       this.debris.render(this.renderer);
 
     } else if (this.state === 'MENU' || this.state === 'SELECT') {
-      // Modo Vitrine 3D no Menu: câmera gira suavemente ao redor do veículo
+      // Modo Showroom 3D no Menu
       this.menuPreviewAngle += dt * 0.9;
       const previewCam = {
         eye: [Math.sin(this.menuPreviewAngle) * 6.5, 3.0, Math.cos(this.menuPreviewAngle) * 6.5],
@@ -2643,23 +3428,20 @@ class Game {
 
       this.renderer.beginFrame(previewCam);
 
-      // Chão do showroom do menu
       const floorMat = Math3D.createMat4();
       Math3D.translateMat4(floorMat, floorMat, [0, -0.1, 0]);
       Math3D.scaleMat4(floorMat, floorMat, [1.5, 1, 1.5]);
       this.renderer.drawMesh(this.road.roadMesh, floorMat);
 
-      // Veículo selecionado girando em tempo real
       const m = Math3D.createMat4();
       Math3D.translateMat4(m, m, [0, 0.5 + Math.sin(this.menuPreviewAngle * 3) * 0.08, 0]);
       const activeModelKey = this.selectedVehicle || 'interceptor';
       this.renderer.drawMesh(this.models[activeModelKey].mesh, m);
 
     } else if (this.state === 'GAMEOVER') {
-      // Atualiza apenas os detritos e partículas após o veículo ser destruído
       this.debris.update(dt);
       this.renderer.beginFrame(this.camera);
-      this.road.render(this.renderer, this.player.worldZ);
+      this.road.render(this.renderer, this.player.worldZ, this.models);
       this.enemies.render(this.renderer);
       this.debris.render(this.renderer);
     }
@@ -2668,7 +3450,7 @@ class Game {
   }
 }
 
-// Inicialização automática quando o DOM carregar
+// Inicialização automática do jogo
 window.addEventListener('DOMContentLoaded', () => {
   window.gameInstance = new Game();
 });
