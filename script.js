@@ -217,7 +217,10 @@ const ENEMY_TYPES = {
     baseHp: 800, // 800 HP obrigatório
     weapon: 'machinegun', // sempre metralhadora
     score: 600,
-    speedRel: 0.95,
+    cruiseSpeed: 52.0,
+    maxSpeed: 68.0,
+    accel: 14.0,
+    lateralSpeed: 6.0,
     width: 2.2, height: 1.2, depth: 3.4,
     fireInterval: 1.1,
     isTruck: false,
@@ -229,7 +232,10 @@ const ENEMY_TYPES = {
     baseHp: 1200, // 1200 HP obrigatório
     weapon: 'cannon', // sempre canhão
     score: 1200,
-    speedRel: 0.72,
+    cruiseSpeed: 40.0,
+    maxSpeed: 54.0,
+    accel: 8.0,
+    lateralSpeed: 3.2,
     width: 3.2, height: 1.8, depth: 4.2,
     fireInterval: 2.2,
     isTruck: true,
@@ -241,7 +247,10 @@ const ENEMY_TYPES = {
     baseHp: 500,
     weapon: 'machinegun', // metralhadora leve
     score: 450,
-    speedRel: 0.9,
+    cruiseSpeed: 55.0,
+    maxSpeed: 72.0,
+    accel: 16.0,
+    lateralSpeed: 7.0,
     width: 2.0, height: 1.1, depth: 3.0,
     fireInterval: 1.4,
     isTruck: false,
@@ -253,7 +262,10 @@ const ENEMY_TYPES = {
     baseHp: 1500,
     weapon: 'shotgun', // sempre dispersora / torreta pesada
     score: 1500,
-    speedRel: 0.68,
+    cruiseSpeed: 38.0,
+    maxSpeed: 50.0,
+    accel: 7.0,
+    lateralSpeed: 2.8,
     width: 3.4, height: 2.4, depth: 5.8,
     fireInterval: 1.9,
     isTruck: true,
@@ -277,6 +289,7 @@ const PLAYER_WEAPONS = {
     fireRate: 2.4,
     damage: 50,    // 50 de dano por projétil obrigatório
     pellets: 3,    // Exatamente 3 balas obrigatório
+    spreadAngles: [-0.045, 0.0, 0.045], // Ângulos precisos do leque da Dispersora
     range: 92.0,   // Alcance moderado estendido
     speed: 120.0,
     color: [0.0, 0.95, 1.0],
@@ -401,6 +414,8 @@ class WebGLRenderer {
     gl.depthFunc(gl.LEQUAL);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     this.program = this.createProgram(VS_SOURCE, FS_SOURCE);
     gl.useProgram(this.program);
@@ -567,6 +582,158 @@ class WebGLRenderer {
    ============================================================================ */
 
 const VoxelBuilder = {
+  // Adiciona feixe 3D contínuo, reto e sem quebras entre dois pontos (linha contínua pura)
+  addContinuousBeam(vertices, x0, y0, z0, x1, y1, z1, thickness, r, g, b, a = 1.0) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dz = z1 - z0;
+    const len = Math.hypot(dx, dy, dz) || 1.0;
+    const ux = dx / len, uy = dy / len, uz = dz / len;
+
+    // Vetor perpendicular horizontal no plano XZ
+    let rx = -uz, rz = ux;
+    const rLen = Math.hypot(rx, rz) || 1.0;
+    rx /= rLen; rz /= rLen;
+
+    const h = thickness * 0.5;
+    const rxH = rx * h, rzH = rz * h;
+
+    // 4 vértices do perfil na origem P0
+    const p00 = [x0 - rxH, y0 - h, z0 - rzH];
+    const p01 = [x0 + rxH, y0 - h, z0 + rzH];
+    const p02 = [x0 + rxH, y0 + h, z0 + rzH];
+    const p03 = [x0 - rxH, y0 + h, z0 - rzH];
+
+    // 4 vértices do perfil no destino P1
+    const p10 = [x1 - rxH, y1 - h, z1 - rzH];
+    const p11 = [x1 + rxH, y1 - h, z1 + rzH];
+    const p12 = [x1 + rxH, y1 + h, z1 + rzH];
+    const p13 = [x1 - rxH, y1 + h, z1 - rzH];
+
+    const faces = [
+      // Topo (+Y)
+      { norm: [0, 1, 0], quad: [ p03, p02, p12, p03, p12, p13 ] },
+      // Base (-Y)
+      { norm: [0, -1, 0], quad: [ p00, p10, p11, p00, p11, p01 ] },
+      // Lado Direito (+R)
+      { norm: [rx, 0, rz], quad: [ p01, p11, p12, p01, p12, p02 ] },
+      // Lado Esquerdo (-R)
+      { norm: [-rx, 0, -rz], quad: [ p00, p03, p13, p00, p13, p10 ] },
+      // Frente (Extremidade P1)
+      { norm: [ux, uy, uz], quad: [ p10, p13, p12, p10, p12, p11 ] },
+      // Trás (Extremidade P0)
+      { norm: [-ux, -uy, -uz], quad: [ p00, p01, p02, p00, p02, p03 ] }
+    ];
+
+    for (let f = 0; f < 6; f++) {
+      const face = faces[f];
+      const nx = face.norm[0], ny = face.norm[1], nz = face.norm[2];
+      for (let v = 0; v < 6; v++) {
+        const p = face.quad[v];
+        vertices.push(p[0], p[1], p[2], nx, ny, nz, r, g, b, a);
+      }
+    }
+  },
+
+  // Adiciona cubo / bloco 3D orientado com rotação Y
+  addOrientedBox(vertices, cx, cy, cz, sx, sy, sz, angle, r, g, b, a = 1.0) {
+    const cosA = Math.cos(angle), sinA = Math.sin(angle);
+    const hx = sx / 2, hy = sy / 2, hz = sz / 2;
+
+    const transformPoint = (lx, ly, lz) => [
+      cx + lx * cosA + lz * sinA,
+      cy + ly,
+      cz - lx * sinA + lz * cosA
+    ];
+
+    const p000 = transformPoint(-hx, -hy, -hz);
+    const p100 = transformPoint(hx, -hy, -hz);
+    const p110 = transformPoint(hx, hy, -hz);
+    const p010 = transformPoint(-hx, hy, -hz);
+    const p001 = transformPoint(-hx, -hy, hz);
+    const p101 = transformPoint(hx, -hy, hz);
+    const p111 = transformPoint(hx, hy, hz);
+    const p011 = transformPoint(-hx, hy, hz);
+
+    const normFront = [sinA, 0, cosA];
+    const normBack = [-sinA, 0, -cosA];
+    const normRight = [cosA, 0, -sinA];
+    const normLeft = [-cosA, 0, sinA];
+
+    const faces = [
+      // Frente (+Z local)
+      { norm: normFront, quad: [ p001, p101, p111, p001, p111, p011 ] },
+      // Trás (-Z local)
+      { norm: normBack, quad: [ p100, p000, p010, p100, p010, p110 ] },
+      // Topo (+Y)
+      { norm: [0, 1, 0], quad: [ p011, p111, p110, p011, p110, p010 ] },
+      // Base (-Y)
+      { norm: [0, -1, 0], quad: [ p000, p100, p101, p000, p101, p001 ] },
+      // Direita (+X local)
+      { norm: normRight, quad: [ p101, p100, p110, p101, p110, p111 ] },
+      // Esquerda (-X local)
+      { norm: normLeft, quad: [ p000, p001, p011, p000, p011, p010 ] }
+    ];
+
+    for (let f = 0; f < 6; f++) {
+      const face = faces[f];
+      const nx = face.norm[0], ny = face.norm[1], nz = face.norm[2];
+      for (let v = 0; v < 6; v++) {
+        const p = face.quad[v];
+        vertices.push(p[0], p[1], p[2], nx, ny, nz, r, g, b, a);
+      }
+    }
+  },
+
+  // Adiciona cilindro 3D orientado ao longo de uma direção angular (raio, comprimento e rotação)
+  addOrientedCylinder(vertices, cx, cy, cz, radius, length, angle, r, g, b, a = 1.0) {
+    const cosA = Math.cos(angle), sinA = Math.sin(angle);
+    const ux = sinA, uy = 0, uz = cosA;
+    const rx = cosA, ry = 0, rz = -sinA;
+
+    const segments = 16;
+    const halfLen = length * 0.5;
+    const centerBack = [cx - ux * halfLen, cy, cz - uz * halfLen];
+    const centerFront = [cx + ux * halfLen, cy, cz + uz * halfLen];
+
+    for (let i = 0; i < segments; i++) {
+      const a0 = (i / segments) * Math.PI * 2;
+      const a1 = ((i + 1) / segments) * Math.PI * 2;
+      const c0 = Math.cos(a0), s0 = Math.sin(a0);
+      const c1 = Math.cos(a1), s1 = Math.sin(a1);
+
+      const off0 = [rx * (radius * c0), radius * s0, rz * (radius * c0)];
+      const off1 = [rx * (radius * c1), radius * s1, rz * (radius * c1)];
+
+      const n0 = [rx * c0, s0, rz * c0];
+      const n1 = [rx * c1, s1, rz * c1];
+
+      const b0 = [centerBack[0] + off0[0], centerBack[1] + off0[1], centerBack[2] + off0[2]];
+      const b1 = [centerBack[0] + off1[0], centerBack[1] + off1[1], centerBack[2] + off1[2]];
+      const f0 = [centerFront[0] + off0[0], centerFront[1] + off0[1], centerFront[2] + off0[2]];
+      const f1 = [centerFront[0] + off1[0], centerFront[1] + off1[1], centerFront[2] + off1[2]];
+
+      // Lateral cilíndrica 3D
+      vertices.push(b0[0], b0[1], b0[2], n0[0], n0[1], n0[2], r, g, b, a);
+      vertices.push(f0[0], f0[1], f0[2], n0[0], n0[1], n0[2], r, g, b, a);
+      vertices.push(f1[0], f1[1], f1[2], n1[0], n1[1], n1[2], r, g, b, a);
+
+      vertices.push(b0[0], b0[1], b0[2], n0[0], n0[1], n0[2], r, g, b, a);
+      vertices.push(f1[0], f1[1], f1[2], n1[0], n1[1], n1[2], r, g, b, a);
+      vertices.push(b1[0], b1[1], b1[2], n1[0], n1[1], n1[2], r, g, b, a);
+
+      // Tampa frontal (círculo com normal frontal)
+      vertices.push(centerFront[0], centerFront[1], centerFront[2], ux, uy, uz, r, g, b, a);
+      vertices.push(f0[0], f0[1], f0[2], ux, uy, uz, r, g, b, a);
+      vertices.push(f1[0], f1[1], f1[2], ux, uy, uz, r, g, b, a);
+
+      // Tampa traseira (círculo com normal traseira)
+      vertices.push(centerBack[0], centerBack[1], centerBack[2], -ux, -uy, -uz, r, g, b, a);
+      vertices.push(b1[0], b1[1], b1[2], -ux, -uy, -uz, r, g, b, a);
+      vertices.push(b0[0], b0[1], b0[2], -ux, -uy, -uz, r, g, b, a);
+    }
+  },
+
   addBox(vertices, cx, cy, cz, sx, sy, sz, r, g, b, a = 1.0) {
     const hx = sx / 2, hy = sy / 2, hz = sz / 2;
     const x0 = cx - hx, x1 = cx + hx;
@@ -1693,6 +1860,24 @@ class RoadManager {
     return Math.atan2(x1 - x0, dz);
   }
 
+  getRoadPositionAtDistance(z, lateralOffset = 0) {
+    const cx = this.getCurveX(z);
+    return {
+      x: cx + lateralOffset,
+      y: 0.5,
+      z: z
+    };
+  }
+
+  getRoadDirectionAtDistance(z) {
+    const angle = this.getTangentAngle(z);
+    return {
+      angle: angle,
+      dirX: Math.sin(angle),
+      dirZ: Math.cos(angle)
+    };
+  }
+
   // Renderização da Estrada Infinita (Muito antes, embaixo e muito depois do jogador)
   render(renderer, playerZ, models) {
     const currentSegment = Math.floor(playerZ / this.segmentLength);
@@ -1767,29 +1952,52 @@ class RoadManager {
    ============================================================================ */
 
 class Projectile {
-  constructor(x, y, z, vx, vy, vz, damage, isPlayer, range, color, size = 0.35, isCannon = false) {
-    this.x = x; this.y = y; this.z = z;
-    this.vx = vx; this.vy = vy; this.vz = vz;
+  constructor(x, y, z, speed, spreadAngle, damage, isPlayer, range, color, size = 0.35, isCannon = false, initialOffset = 0, road = null, weaponType = 'machinegun') {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+    this.speed = speed;
+    this.spreadAngle = spreadAngle || 0;
     this.damage = damage;
     this.isPlayer = isPlayer;
     this.traveled = 0;
     this.range = range;
     this.color = color;
     this.size = size;
-    this.isCannon = isCannon;
+    this.isCannon = (isCannon || weaponType === 'cannon' || weaponType === 'canhao');
+    this.isShotgun = (weaponType === 'shotgun' || weaponType === 'dispersora');
+    this.weaponType = weaponType;
     this.active = true;
+    this.road = road;
+
+    // Estado da trajetória relativa à estrada
+    this.roadZ = z;
+    this.lateralOffset = initialOffset;
+    this.lateralDriftSpeed = Math.sin(this.spreadAngle) * Math.abs(this.speed);
+    this.forwardSpeed = Math.cos(this.spreadAngle) * this.speed;
   }
 
   update(dt) {
-    const dx = this.vx * dt;
-    const dy = this.vy * dt;
-    const dz = this.vz * dt;
-    this.x += dx;
-    this.y += dy;
-    this.z += dz;
-    this.traveled += Math.hypot(dx, dy, dz);
-    if (this.traveled >= this.range) {
-      this.active = false;
+    if (this.road) {
+      this.roadZ += this.forwardSpeed * dt;
+      this.lateralOffset += this.lateralDriftSpeed * dt;
+      this.traveled += Math.abs(this.speed) * dt;
+
+      // Posição 3D física real e contínua acompanhando as curvas da estrada
+      const curveCenter = this.road.getCurveX(this.roadZ);
+      this.x = curveCenter + this.lateralOffset;
+      this.z = this.roadZ;
+
+      if (this.traveled >= this.range) {
+        this.active = false;
+      }
+    } else {
+      const dz = this.speed * dt;
+      this.z += dz;
+      this.traveled += Math.abs(dz);
+      if (this.traveled >= this.range) {
+        this.active = false;
+      }
     }
   }
 }
@@ -1814,6 +2022,143 @@ class WeaponSystem {
     }
   }
 
+  // Obtenção unificada das trajetórias reais de disparo (compartilhado entre projéteis e linhas de mira)
+  getTrajectories(weaponKey, playerX, playerY, playerZ, roadAngle, options = {}) {
+    const cfg = PLAYER_WEAPONS[weaponKey] || PLAYER_WEAPONS.machinegun;
+    const trajectories = [];
+    const road = this.game.road;
+
+    if (weaponKey === 'shotgun') {
+      // Dispersora: EXATAMENTE 3 projéteis com spread concentrado
+      const spreadAngles = cfg.spreadAngles || [-0.045, 0.0, 0.045];
+      const originX = playerX;
+      const originY = playerY + 0.6;
+      const originZ = playerZ + 1.2;
+      const curveCenter = road ? road.getCurveX(originZ) : 0;
+      const baseOffset = originX - curveCenter;
+
+      for (const sp of spreadAngles) {
+        trajectories.push({
+          originX: originX,
+          originY: originY,
+          originZ: originZ,
+          initialOffset: baseOffset,
+          spreadAngle: sp,
+          speed: cfg.speed,
+          range: cfg.range,
+          color: cfg.color,
+          size: cfg.size,
+          isCannon: false
+        });
+      }
+
+    } else if (weaponKey === 'cannon') {
+      // Canhão Pesado: 1 projétil central de alto calibre
+      const originX = playerX;
+      const originY = playerY + 0.8;
+      const originZ = playerZ + 1.8;
+      const curveCenter = road ? road.getCurveX(originZ) : 0;
+      const baseOffset = originX - curveCenter;
+
+      trajectories.push({
+        originX: originX,
+        originY: originY,
+        originZ: originZ,
+        initialOffset: baseOffset,
+        spreadAngle: 0,
+        speed: cfg.speed,
+        range: cfg.range,
+        color: cfg.color,
+        size: cfg.size,
+        isCannon: true
+      });
+
+    } else {
+      // Metralhadora: canos esquerdo e direito com muzzles dedicados
+      const { keyQ = false, keyE = false, forAim = false, sideAlternator = false } = options;
+
+      let includeLeft = false;
+      let includeRight = false;
+
+      if (forAim) {
+        // Na mira: se estiver segurando Q exclusivo (apenas esquerdo), mostra linha esquerda;
+        // se estiver segurando E exclusivo (apenas direito), mostra linha direita;
+        // se ambos ou nenhum estiverem pressionados, mostra as DUAS linhas simultaneamente
+        if (keyQ && !keyE) {
+          includeLeft = true;
+        } else if (keyE && !keyQ) {
+          includeRight = true;
+        } else {
+          includeLeft = true;
+          includeRight = true;
+        }
+      } else {
+        // No disparo real
+        if (keyQ && keyE) {
+          includeLeft = true;
+          includeRight = true;
+        } else if (keyQ) {
+          includeLeft = true;
+        } else if (keyE) {
+          includeRight = true;
+        } else {
+          if (sideAlternator) includeLeft = true;
+          else includeRight = true;
+        }
+      }
+
+      if (includeLeft) {
+        const leftOffset = 1.4;
+        const lx = playerX + Math.cos(roadAngle) * leftOffset;
+        const ly = playerY + 0.5;
+        const lz = playerZ - Math.sin(roadAngle) * leftOffset + 1.2;
+        const curveCenter = road ? road.getCurveX(lz) : 0;
+        const baseOffset = lx - curveCenter;
+
+        trajectories.push({
+          originX: lx,
+          originY: ly,
+          originZ: lz,
+          initialOffset: baseOffset,
+          spreadAngle: 0,
+          speed: cfg.speed,
+          range: cfg.range,
+          color: cfg.color,
+          size: cfg.size,
+          isCannon: false,
+          isLeft: true,
+          isRight: false
+        });
+      }
+
+      if (includeRight) {
+        const rightOffset = -1.4;
+        const rx = playerX + Math.cos(roadAngle) * rightOffset;
+        const ry = playerY + 0.5;
+        const rz = playerZ - Math.sin(roadAngle) * rightOffset + 1.2;
+        const curveCenter = road ? road.getCurveX(rz) : 0;
+        const baseOffset = rx - curveCenter;
+
+        trajectories.push({
+          originX: rx,
+          originY: ry,
+          originZ: rz,
+          initialOffset: baseOffset,
+          spreadAngle: 0,
+          speed: cfg.speed,
+          range: cfg.range,
+          color: cfg.color,
+          size: cfg.size,
+          isCannon: false,
+          isLeft: false,
+          isRight: true
+        });
+      }
+    }
+
+    return trajectories;
+  }
+
   // Disparo do jogador respeitando Segurar ESPAÇO, Cadência, Q/E e Danos
   firePlayer(weaponKey, playerX, playerY, playerZ, roadAngle, hasDoubleDamage, hasRapidFire, keyQ, keyE) {
     const cfg = PLAYER_WEAPONS[weaponKey] || PLAYER_WEAPONS.machinegun;
@@ -1826,15 +2171,13 @@ class WeaponSystem {
     if (weaponKey === 'shotgun') {
       // Dispersora: EXATAMENTE 3 balas por disparo em leque concentrado
       this.game.sound.playPlayerShotgun();
-      const spreadAngles = [-0.045, 0.0, 0.045]; // Ângulos precisos e próximos
-      for (const sp of spreadAngles) {
-        const totalAngle = roadAngle + sp;
+      const trajs = this.getTrajectories(weaponKey, playerX, playerY, playerZ, roadAngle);
+      for (const t of trajs) {
         this.projectiles.push(new Projectile(
-          playerX, playerY + 0.6, playerZ + 1.2,
-          Math.sin(totalAngle) * cfg.speed,
-          0,
-          Math.cos(totalAngle) * cfg.speed,
-          dmg, true, cfg.range, cfg.color, cfg.size, false
+          t.originX, t.originY, t.originZ,
+          t.speed, t.spreadAngle,
+          dmg, true, t.range, t.color, t.size, false,
+          t.initialOffset, this.game.road, 'shotgun'
         ));
       }
       this.game.debris.spawnHitSparks(playerX, playerY + 0.6, playerZ + 2.0, 10);
@@ -1846,63 +2189,40 @@ class WeaponSystem {
       this.game.player.recoilZ = -0.65;
       this.game.debris.spawnHitSparks(playerX, playerY + 0.8, playerZ + 2.2, 14);
 
-      this.projectiles.push(new Projectile(
-        playerX, playerY + 0.8, playerZ + 1.8,
-        Math.sin(roadAngle) * cfg.speed,
-        0,
-        Math.cos(roadAngle) * cfg.speed,
-        dmg, true, cfg.range, cfg.color, cfg.size, true
-      ));
+      const trajs = this.getTrajectories(weaponKey, playerX, playerY, playerZ, roadAngle);
+      for (const t of trajs) {
+        this.projectiles.push(new Projectile(
+          t.originX, t.originY, t.originZ,
+          t.speed, t.spreadAngle,
+          dmg, true, t.range, t.color, t.size, true,
+          t.initialOffset, this.game.road, 'cannon'
+        ));
+      }
 
     } else {
       // Metralhadora: 8 tiros/s, 20 dano
       // Controle de canos: Q = exclusivo esquerdo, E = exclusivo direito, Q+E = simultâneo
       this.game.sound.playPlayerMachinegun();
 
-      let fireLeft = false;
-      let fireRight = false;
-
-      if (keyQ && keyE) {
-        fireLeft = true;
-        fireRight = true;
-      } else if (keyQ) {
-        fireLeft = true;
-      } else if (keyE) {
-        fireRight = true;
-      } else {
-        // Sem tecla: alternância determinística estrita (nunca aleatório)
+      if (!keyQ && !keyE) {
         this.mgSideAlternator = !this.mgSideAlternator;
-        if (this.mgSideAlternator) fireLeft = true;
-        else fireRight = true;
       }
 
-      // No sistema de coordenadas, offset lateral positivo é o lado esquerdo na visão do jogador
-      if (fireLeft) {
-        const leftOffset = 1.4;
-        const lx = playerX + Math.cos(roadAngle) * leftOffset;
-        const lz = playerZ - Math.sin(roadAngle) * leftOffset + 1.2;
-        this.projectiles.push(new Projectile(
-          lx, playerY + 0.5, lz,
-          Math.sin(roadAngle) * cfg.speed,
-          0,
-          Math.cos(roadAngle) * cfg.speed,
-          dmg, true, cfg.range, cfg.color, cfg.size, false
-        ));
-        this.game.debris.spawnHitSparks(lx, playerY + 0.5, lz + 0.5, 3);
-      }
+      const trajs = this.getTrajectories(weaponKey, playerX, playerY, playerZ, roadAngle, {
+        keyQ,
+        keyE,
+        forAim: false,
+        sideAlternator: this.mgSideAlternator
+      });
 
-      if (fireRight) {
-        const rightOffset = -1.4;
-        const rx = playerX + Math.cos(roadAngle) * rightOffset;
-        const rz = playerZ - Math.sin(roadAngle) * rightOffset + 1.2;
+      for (const t of trajs) {
         this.projectiles.push(new Projectile(
-          rx, playerY + 0.5, rz,
-          Math.sin(roadAngle) * cfg.speed,
-          0,
-          Math.cos(roadAngle) * cfg.speed,
-          dmg, true, cfg.range, cfg.color, cfg.size, false
+          t.originX, t.originY, t.originZ,
+          t.speed, t.spreadAngle,
+          dmg, true, t.range, t.color, t.size, false,
+          t.initialOffset, this.game.road, 'machinegun'
         ));
-        this.game.debris.spawnHitSparks(rx, playerY + 0.5, rz + 0.5, 3);
+        this.game.debris.spawnHitSparks(t.originX, t.originY, t.originZ + 0.5, 3);
       }
     }
 
@@ -1911,26 +2231,25 @@ class WeaponSystem {
 
   // Disparo dos Inimigos com armamento específico e som próprio
   fireEnemy(enemyX, enemyY, enemyZ, targetX, targetZ, weaponType = 'machinegun') {
-    const dx = targetX - enemyX;
-    const dz = targetZ - enemyZ;
-    const len = Math.hypot(dx, dz) || 1;
+    const curveCenter = this.game.road ? this.game.road.getCurveX(enemyZ) : 0;
+    const initialOffset = enemyX - curveCenter;
 
     if (weaponType === 'cannon') {
       this.game.sound.playEnemyCannon();
       this.projectiles.push(new Projectile(
         enemyX, enemyY + 1.0, enemyZ - 1.5,
-        (dx / len) * 75.0, 0, (dz / len) * 75.0,
-        50, false, 160.0, [1.0, 0.4, 0.1], 0.6, true
+        -75.0, 0,
+        50, false, 160.0, [1.0, 0.4, 0.1], 0.6, true,
+        initialOffset, this.game.road, 'cannon'
       ));
     } else if (weaponType === 'shotgun') {
       this.game.sound.playEnemyShotgun();
-      const baseAngle = Math.atan2(dx, dz);
       for (const sp of [-0.06, 0.0, 0.06]) {
-        const ang = baseAngle + sp;
         this.projectiles.push(new Projectile(
           enemyX, enemyY + 0.8, enemyZ - 1.5,
-          Math.sin(ang) * 80.0, 0, Math.cos(ang) * 80.0,
-          25, false, 110.0, [1.0, 0.6, 0.1], 0.32, false
+          -80.0, sp,
+          25, false, 110.0, [1.0, 0.6, 0.1], 0.32, false,
+          initialOffset, this.game.road, 'shotgun'
         ));
       }
     } else {
@@ -1938,8 +2257,9 @@ class WeaponSystem {
       this.game.sound.playEnemyMachinegun();
       this.projectiles.push(new Projectile(
         enemyX, enemyY + 0.6, enemyZ - 1.2,
-        (dx / len) * 85.0, 0, (dz / len) * 85.0,
-        20, false, 150.0, [1.0, 0.2, 0.2], 0.35, false
+        -85.0, 0,
+        20, false, 150.0, [1.0, 0.2, 0.2], 0.35, false,
+        initialOffset, this.game.road, 'machinegun'
       ));
     }
   }
@@ -1948,49 +2268,109 @@ class WeaponSystem {
   render(renderer, player, road) {
     const verts = [];
 
-    // 1. Projéteis com geometria 3D facetada arredondada e normais de iluminação
+    // 1. Renderização 3D dos Projéteis por Tipo de Arma
     for (const p of this.projectiles) {
-      if (p.isCannon) {
-        // Grande projétil de canhão facetado 3D
-        VoxelBuilder.addFacetedSphere(verts, p.x, p.y, p.z, p.size, p.size * 1.8, p.color[0], p.color[1], p.color[2]);
+      let baseAngle = road ? road.getTangentAngle(p.roadZ || p.z) : 0;
+      let projAngle = baseAngle + (p.spreadAngle || 0);
+      if (p.speed < 0) {
+        projAngle += Math.PI;
+      }
+
+      if (p.isCannon || p.weaponType === 'cannon' || p.weaponType === 'canhao') {
+        // Canhão Pesado: Cubo / Bloco Voxel 3D Sólido
+        const cubeSize = Math.max(0.95, p.size * 1.35);
+        VoxelBuilder.addOrientedBox(
+          verts,
+          p.x, p.y, p.z,
+          cubeSize, cubeSize, cubeSize,
+          projAngle,
+          p.color[0], p.color[1], p.color[2], 1.0
+        );
+      } else if (p.isShotgun || p.weaponType === 'shotgun' || p.weaponType === 'dispersora') {
+        // Dispersora: Barra / Prisma Retangular 3D Alongado (Geometria 3D de bloco retilíneo)
+        const barWidth = 0.35;
+        const barHeight = 0.35;
+        const barLength = 3.6;
+        // Barra retangular principal
+        VoxelBuilder.addOrientedBox(
+          verts,
+          p.x, p.y, p.z,
+          barWidth, barHeight, barLength,
+          projAngle,
+          p.color[0], p.color[1], p.color[2], 1.0
+        );
+        // Núcleo energético interno em barra retangular brilhante
+        VoxelBuilder.addOrientedBox(
+          verts,
+          p.x, p.y, p.z,
+          barWidth * 0.45, barHeight * 0.45, barLength + 0.3,
+          projAngle,
+          0.85, 0.98, 1.0, 1.0
+        );
       } else {
-        // Projétil / feixe cilíndrico arredondado 3D
-        VoxelBuilder.addFacetedSphere(verts, p.x, p.y, p.z, p.size, p.size * 2.2, p.color[0], p.color[1], p.color[2]);
+        // Metralhadora / Padrão: Projétil esférico / cápsula facetada 3D
+        VoxelBuilder.addFacetedSphere(
+          verts,
+          p.x, p.y, p.z,
+          p.size, p.size * 2.2,
+          p.color[0], p.color[1], p.color[2]
+        );
       }
     }
 
-    // 2. Linha de Mira / Retículo 3D Visível em Tempo Real
+    // 2. Linhas de Mira 3D Contínuas Acompanhando as Curvas da Estrada em Tempo Real
     if (player && !player.destroyed && this.game.state === 'PLAYING') {
       const roadAngle = road.getTangentAngle(player.worldZ);
-      const dirX = Math.sin(roadAngle);
-      const dirZ = Math.cos(roadAngle);
+      const activeWeapon = this.game.selectedWeapon || 'machinegun';
+      const inputs = this.game.inputs || {};
 
-      // Feixe laser de mira projetado 70 metros à frente a partir do veículo
-      const beamSegments = 14;
-      const beamLen = 70.0;
-      const originX = player.worldX;
-      const originY = player.worldY + 0.55;
-      const originZ = player.worldZ + 1.8;
+      // Obtém as trajetórias reais correspondentes à arma equipada e controles ativos
+      const aimTrajectories = this.getTrajectories(
+        activeWeapon,
+        player.worldX,
+        player.worldY,
+        player.worldZ,
+        roadAngle,
+        {
+          keyQ: !!inputs.keyQ,
+          keyE: !!inputs.keyE,
+          forAim: true
+        }
+      );
 
-      for (let s = 0; s < beamSegments; s++) {
-        const t0 = (s / beamSegments) * beamLen;
-        const t1 = ((s + 0.65) / beamSegments) * beamLen; // Traços espaçados
-        const bx = originX + dirX * ((t0 + t1) * 0.5);
-        const bz = originZ + dirZ * ((t0 + t1) * 0.5);
-        const bLen = t1 - t0;
-        const alpha = 0.55 * (1.0 - (s / beamSegments) * 0.7);
+      const cfg = PLAYER_WEAPONS[activeWeapon] || PLAYER_WEAPONS.machinegun;
+      const aimLen = Math.min(cfg.range || 70.0, 70.0);
+      const thickness = 0.055;
+      const alpha = 0.50; // 50% de transparência: visível, discreto e translúcido
+      const steps = 14;   // Segmentos conectados suavemente ao longo da curva real da pista
 
-        // Guia tridimensional no WebGL
-        VoxelBuilder.addBox(verts, bx, originY, bz, 0.08, 0.08, bLen, 0.0, 0.95, 1.0, alpha);
+      // Desenha cada trajetória como uma linha contínua que acompanha perfeitamente a curva da pista
+      for (const traj of aimTrajectories) {
+        for (let i = 0; i < steps; i++) {
+          const s0 = (i / steps) * aimLen;
+          const s1 = ((i + 1) / steps) * aimLen;
+
+          const z0 = traj.originZ + s0 * Math.cos(traj.spreadAngle);
+          const z1 = traj.originZ + s1 * Math.cos(traj.spreadAngle);
+
+          const off0 = traj.initialOffset + s0 * Math.sin(traj.spreadAngle);
+          const off1 = traj.initialOffset + s1 * Math.sin(traj.spreadAngle);
+
+          const x0 = road.getCurveX(z0) + off0;
+          const x1 = road.getCurveX(z1) + off1;
+
+          const y0 = traj.originY;
+          const y1 = traj.originY;
+
+          VoxelBuilder.addContinuousBeam(
+            verts,
+            x0, y0, z0,
+            x1, y1, z1,
+            thickness,
+            1.0, 0.05, 0.05, alpha
+          );
+        }
       }
-
-      // Retículo de mira 3D no plano focal à frente (35m)
-      const reticleDist = 38.0;
-      const rx = originX + dirX * reticleDist;
-      const rz = originZ + dirZ * reticleDist;
-      const ry = originY;
-      VoxelBuilder.addBox(verts, rx, ry, rz, 1.2, 0.08, 0.08, 0.0, 0.95, 1.0, 0.85);
-      VoxelBuilder.addBox(verts, rx, ry, rz, 0.08, 1.2, 0.08, 0.0, 0.95, 1.0, 0.85);
     }
 
     if (verts.length > 0) {
@@ -2189,6 +2569,7 @@ class EnemyVehicle {
 
     this.worldZ = z;
     this.laneX = targetLaneX;
+    this.targetLaneX = targetLaneX;
     this.worldX = 0;
     this.worldY = 0.5;
 
@@ -2198,10 +2579,14 @@ class EnemyVehicle {
     this.hp = this.maxHp;
     this.score = Math.round(this.config.score * (1 + (game.wave - 1) * 0.1));
 
-    this.speed = game.player.forwardSpeed * this.config.speedRel;
+    // Velocidade longitudinal e aceleração próprias e independentes
+    this.forwardSpeed = this.config.cruiseSpeed || 48.0;
+    this.targetSpeed = this.forwardSpeed;
+    this.accel = this.config.accel || 12.0;
+    this.lateralSpeed = this.config.lateralSpeed || 5.0;
+
     this.fireTimer = Math.random() * 1.5;
-    this.laneChangeTimer = 2.0 + Math.random() * 3.0;
-    this.targetLaneX = targetLaneX;
+    this.laneChangeTimer = 2.5 + Math.random() * 3.5;
     this.hitTimer = 0;
     this.destroyed = false;
   }
@@ -2244,42 +2629,71 @@ class EnemyVehicle {
     if (this.destroyed) return;
     if (this.hitTimer > 0) this.hitTimer -= dt;
 
-    // Regra da Zona de Combate: Inimigos NUNCA devem ficar muito longe atrás do jogador.
-    // Se um inimigo ficar para trás, ele acelera naturalmente para retornar à zona de combate.
     const distZ = this.worldZ - player.worldZ;
-    if (distZ < -4.0) {
-      // Atrás do jogador: acelera com impulso natural para retornar
-      this.speed = player.forwardSpeed * 1.35 + 14.0;
-    } else if (distZ > 90.0) {
-      // Muito à frente: desacelera um pouco
-      this.speed = player.forwardSpeed * 0.7;
+    const distLane = Math.abs(this.laneX - player.laneX);
+
+    // 1. Definição da velocidade alvo independente
+    if (distZ < -25.0) {
+      // Ficou para trás: tenta acelerar suavemente até seu teto de velocidade
+      this.targetSpeed = this.config.maxSpeed || 65.0;
+    } else if (distZ > 100.0) {
+      // Muito à frente: reduz gradualmente para velocidade de cruzeiro
+      this.targetSpeed = this.config.cruiseSpeed * 0.85;
+    } else if (Math.abs(distZ) < 7.0 && distLane < 3.2) {
+      // Lado a lado com o jogador em risco de atrito lateral: ajusta velocidade para permitir ultrapassagem limpa
+      if (this.forwardSpeed >= player.forwardSpeed) {
+        this.targetSpeed = this.config.maxSpeed; // Acelera para completar ultrapassagem à frente
+      } else {
+        this.targetSpeed = this.config.cruiseSpeed * 0.8; // Desacelera suavemente para deixar o jogador passar
+      }
     } else {
-      // Na zona de combate ideal: velocidade correspondente ao seu perfil
-      this.speed = player.forwardSpeed * this.config.speedRel;
+      // Ritmo de cruzeiro normal independente
+      this.targetSpeed = this.config.cruiseSpeed;
     }
 
-    this.worldZ += this.speed * dt;
+    // Aceleração/desaceleração contínua e suave (sem saltos de velocidade)
+    const speedDiff = this.targetSpeed - this.forwardSpeed;
+    if (Math.abs(speedDiff) > 0.05) {
+      this.forwardSpeed += Math.sign(speedDiff) * Math.min(Math.abs(speedDiff), this.accel * dt);
+    }
+
+    // Avanço longitudinal autônomo no eixo Z
+    this.worldZ += this.forwardSpeed * dt;
     const curveCenter = this.game.road.getCurveX(this.worldZ);
 
-    // Comportamento de Faixas da IA
+    // 2. Inteligência de Faixas e Evitamento Lateral
     this.laneChangeTimer -= dt;
-    if (this.laneChangeTimer <= 0) {
-      this.laneChangeTimer = 2.5 + Math.random() * 4.0;
-      if (this.config.aiType === 'align') {
-        this.targetLaneX = player.laneX + (Math.random() - 0.5) * 2.5;
-      } else if (this.config.aiType === 'evasive') {
-        this.targetLaneX = (Math.random() - 0.5) * 16.0;
+    const availableLanes = [-7.0, -2.5, 2.5, 7.0];
+
+    // Desvio de emergência se estiver colando lateralmente no jogador
+    if (Math.abs(distZ) < 8.0 && distLane < 3.5) {
+      if (this.laneX >= player.laneX) {
+        // Jogador está à esquerda -> inimigo desvia para a direita
+        this.targetLaneX = Math.min(7.5, this.laneX + 3.5);
       } else {
-        this.targetLaneX = [-6.0, -2.0, 2.0, 6.0][Math.floor(Math.random() * 4)];
+        // Jogador está à direita -> inimigo desvia para a esquerda
+        this.targetLaneX = Math.max(-7.5, this.laneX - 3.5);
       }
+    } else if (this.laneChangeTimer <= 0) {
+      this.laneChangeTimer = 3.0 + Math.random() * 4.0;
+      // Escolhe uma faixa independente sem copiar ou colar na faixa do jogador
+      this.targetLaneX = availableLanes[Math.floor(Math.random() * availableLanes.length)];
     }
 
-    const laneSpeed = this.config.isTruck ? 6.0 : 12.0;
-    this.laneX += (this.targetLaneX - this.laneX) * Math.min(1.0, dt * laneSpeed);
+    // Transição lateral suave com velocidade lateral própria do veículo
+    const laneDiff = this.targetLaneX - this.laneX;
+    if (Math.abs(laneDiff) > 0.05) {
+      const step = Math.sign(laneDiff) * Math.min(Math.abs(laneDiff), this.lateralSpeed * dt);
+      this.laneX += step;
+    }
+
+    // Garante limites da pista
+    const maxBound = (this.game.road.roadWidth / 2) - 1.5;
+    this.laneX = Math.max(-maxBound, Math.min(maxBound, this.laneX));
     this.worldX = curveCenter + this.laneX;
 
-    // Sistema de Tiro: específico por tipo de veículo
-    if (distZ > 8.0 && distZ < 85.0) {
+    // 3. Sistema de Tiro
+    if (distZ > 6.0 && distZ < 85.0) {
       this.fireTimer -= dt;
       if (this.fireTimer <= 0) {
         this.fireTimer = this.config.fireInterval + Math.random() * 0.4;
@@ -2307,18 +2721,51 @@ class EnemyVehicle {
   }
 }
 
+// Limites Centrais de Inimigos Ativos Simultâneos
+const ABSOLUTE_MAX_ACTIVE_ENEMIES = 7;
+const INITIAL_MAX_ACTIVE_ENEMIES = 3;
+
 class EnemyManager {
   constructor(game) {
     this.game = game;
     this.enemies = [];
-    this.spawnTimer = 1.0;
+    this.spawnTimer = 2.0;
+  }
+
+  // Limite máximo de inimigos permitidos para a onda atual
+  getMaxActiveEnemies() {
+    const wave = (this.game && this.game.wave) ? this.game.wave : 1;
+    // Wave 1 → 3, Wave 2 → 4, Wave 3 → 5, Wave 4 → 6, Wave 5+ → 7 (Teto Absoluto: 7)
+    return Math.min(ABSOLUTE_MAX_ACTIVE_ENEMIES, INITIAL_MAX_ACTIVE_ENEMIES + (wave - 1));
+  }
+
+  // Contagem estrita de inimigos verdadeiramente ativos (vivos e na partida)
+  getActiveEnemyCount() {
+    let count = 0;
+    for (let i = 0; i < this.enemies.length; i++) {
+      if (!this.enemies[i].destroyed) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // Consulta centralizada do limite: nenhuma criação pode ocorrer se o limite for atingido
+  canSpawnEnemy() {
+    return this.getActiveEnemyCount() < this.getMaxActiveEnemies();
   }
 
   update(dt, player) {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
-      this.spawnTimer = Math.max(1.2, 3.2 - (this.game.wave * 0.15));
-      this.spawnNextWaveEnemy(player.worldZ);
+      if (this.canSpawnEnemy()) {
+        // Distribui o spawn gradualmente ao longo do tempo (sem spawnar em bloco)
+        this.spawnTimer = Math.max(1.8, 3.8 - (this.game.wave * 0.2));
+        this.spawnNextWaveEnemy(player.worldZ);
+      } else {
+        // Limite atingido: aguarda breve intervalo sem instanciar veículos extras
+        this.spawnTimer = 0.8;
+      }
     }
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -2333,6 +2780,9 @@ class EnemyManager {
   }
 
   spawnNextWaveEnemy(playerZ) {
+    // Verificação estrita antes de instanciar
+    if (!this.canSpawnEnemy()) return null;
+
     const truckChance = Math.min(0.55, 0.15 + (this.game.wave - 1) * 0.08);
     let type = 'scout';
 
@@ -2345,9 +2795,21 @@ class EnemyManager {
       else type = 'titan';
     }
 
-    const spawnZ = playerZ + 120.0 + Math.random() * 40.0;
-    const laneX = [-7.0, -2.5, 2.5, 7.0][Math.floor(Math.random() * 4)];
-    this.enemies.push(new EnemyVehicle(this.game, type, spawnZ, laneX));
+    // Distância mínima e espaçamento entre veículos para evitar carros colados
+    const lanes = [-7.0, -2.5, 2.5, 7.0];
+    let chosenLane = lanes[Math.floor(Math.random() * lanes.length)];
+    let spawnZ = playerZ + 115.0 + Math.random() * 45.0;
+
+    // Garante espaço longitudinal seguro de pelo menos 20m em relação a outros carros
+    for (const e of this.enemies) {
+      if (!e.destroyed && Math.abs(e.worldZ - spawnZ) < 20.0) {
+        spawnZ = e.worldZ + 25.0 + Math.random() * 12.0;
+      }
+    }
+
+    const enemy = new EnemyVehicle(this.game, type, spawnZ, chosenLane);
+    this.enemies.push(enemy);
+    return enemy;
   }
 
   render(renderer) {
@@ -3234,6 +3696,12 @@ class Game {
         this.sound.playCrash();
         this.camera.addShake(0.5);
         this.debris.spawnHitSparks((p.worldX + e.worldX) * 0.5, 0.6, (p.worldZ + e.worldZ) * 0.5, 16);
+
+        // Impulso de separação física elástica para desvincular imediatamente os veículos
+        const pushDir = (p.laneX >= e.laneX) ? 1.0 : -1.0;
+        p.laneX += pushDir * 1.5;
+        e.laneX -= pushDir * 1.5;
+        e.targetLaneX = e.laneX;
       }
     }
 
